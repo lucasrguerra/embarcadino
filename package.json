@@ -1,0 +1,31 @@
+{
+  "name": "embarcadino",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lucasrguerra/embarcadino.git"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "keywords": [],
+  "author": "lucasrguerra",
+  "license": "MIT License",
+  "bugs": {
+    "url": "https://github.com/lucasrguerra/embarcadino/issues"
+  },
+  "homepage": "https://github.com/lucasrguerra/embarcadino#readme",
+  "dependencies": {
+    "@google/generative-ai": "^0.24.0",
+    "axios": "^1.8.4",
+    "cheerio": "^1.0.0",
+    "dotenv": "^16.4.7",
+    "telegraf": "^4.16.3"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  }
+}
