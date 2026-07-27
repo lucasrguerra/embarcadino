@@ -42,17 +42,37 @@ const MAX_TOOL_RESULT_CHARS = 20_000;
 
 /**
  * Quantas vezes o rascunho volta para o modelo por reprovar na auditoria de SEO.
- * Duas passadas resolvem a grande maioria dos casos; a partir daí o modelo
- * começa a encurtar o texto pra "ganhar" nos números, o que piora o post.
+ * Três passadas porque a auditoria agora cobra também tamanho e referências, e
+ * ampliar o texto costuma custar uma rodada só para isso.
  */
-const MAX_SEO_REVISIONS = 2;
+const MAX_SEO_REVISIONS = 3;
 
 /**
  * Piso de palavras aceito numa revisão, em relação ao rascunho anterior.
- * Corrigir legibilidade é reescrever, não amputar: se a revisão veio com menos
- * de 80% do texto, o modelo cortou conteúdo e ficamos com a versão anterior.
+ *
+ * Era 0.8, e isso transformava o ciclo numa bomba de encolhimento: cada rodada
+ * podia perder 20% do texto, e "encurte as frases" é justamente o conselho que
+ * o modelo executa cortando conteúdo. Duas rodadas levavam um post de 1.000
+ * palavras a 640. A tolerância agora é de 5%, o suficiente para trocar
+ * "possibilita a realização de" por "permite" sem abrir espaço para amputação.
  */
-const MIN_REVISION_WORD_RATIO = 0.8;
+const MIN_REVISION_WORD_RATIO = 0.95;
+
+/**
+ * Leituras de página exigidas antes de aceitar o rascunho. Buscar sem ler
+ * devolve título e snippet, e é com isso que o modelo escreve raso: sem número,
+ * sem especificação e sem referência para citar.
+ */
+const MIN_PAGE_READS = 2;
+
+/** Quantas vezes insistimos que o modelo pesquise antes de redigir. */
+const MAX_RESEARCH_PUSHBACKS = 1;
+
+/**
+ * Idas ao modelo dentro de uma rodada de revisão. Mais de uma só é necessária
+ * quando ele abre fonte nova para completar as referências.
+ */
+const MAX_REVISION_ROUNDS = 4;
 
 export class WriterService {
   /** @type {import('../ai/ai.client.js').AiClient} */
@@ -130,21 +150,19 @@ export class WriterService {
 
       messages.push({ role: 'user', content: buildSeoRevisionRequest(blocking, draft) });
 
-      let message;
+      // Faltar referência é o único problema que não se resolve reescrevendo:
+      // o modelo precisa abrir fonte nova. Nesse caso as ferramentas ficam
+      // liberadas; nos demais, bloqueadas, para ele não recomeçar a pesquisa.
+      const needsResearch = blocking.some((issue) => issue.code === 'external-links');
+
+      let content;
       try {
-        ({ message } = await this.#client.chat(messages, {
-          tools: this.#tools,
-          model: this.#model,
-          toolChoice: 'none',
-          timeout: WRITE_TIMEOUT_MS,
-        }));
+        content = await this.#completeRevision(messages, needsResearch);
       } catch (err) {
         logger.warn('WRITER', 'Falha na revisão de SEO, seguindo com o rascunho anterior', err);
         break;
       }
-      messages.push(message);
 
-      const content = message.content?.trim();
       if (!content?.includes(SECTION_MARKERS.content)) {
         logger.warn('WRITER', 'Revisão de SEO veio fora do envelope, seguindo com o rascunho anterior.');
         break;
@@ -181,6 +199,8 @@ export class WriterService {
    */
   async #runToolLoop(messages) {
     let markerRetries = 0;
+    let pageReads = 0;
+    let researchPushbacks = 0;
 
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       const remainingRounds = MAX_TOOL_ROUNDS - round;
@@ -246,8 +266,66 @@ Não adicione comentários, introduções ou explicações fora do envelope. Com
           continue;
         }
 
+        // Rascunho entregue sem ter aberto fonte nenhuma: o modelo se contentou
+        // com os snippets da busca. Mandamos de volta uma vez, com as tools
+        // ainda disponíveis — é a diferença entre um post com especificação e
+        // um post genérico.
+        if (pageReads < MIN_PAGE_READS && researchPushbacks < MAX_RESEARCH_PUSHBACKS && !forceText) {
+          researchPushbacks++;
+          logger.info('WRITER', `Rascunho antes da pesquisa (${pageReads} leitura(s)), exigindo read_page.`);
+          messages.push({
+            role: 'user',
+            content:
+              `Antes de fechar o rascunho: você abriu ${pageReads} página(s) com read_page. ` +
+              `Leia ao menos ${MIN_PAGE_READS} fontes primárias agora (documentação oficial, datasheet, ` +
+              'aviso do fabricante, relatório técnico) sobre os pontos centrais do tema. ' +
+              'Depois reescreva o rascunho completo usando os dados concretos que encontrar — número, ' +
+              'versão, especificação, limite — e cite essas fontes na seção Referências.',
+          });
+          continue;
+        }
+
         return content;
       }
+
+      for (const toolCall of message.tool_calls) {
+        if (toolCall.function?.name === 'read_page') pageReads++;
+
+        messages.push({
+          role: 'tool',
+          tool_call_id: toolCall.id,
+          content: truncateJson(await this.#runTool(toolCall)),
+        });
+      }
+    }
+
+    throw new Error('O modelo não gerou o rascunho no formato correto após várias tentativas ou pesquisou demais.');
+  }
+
+  /**
+   * Uma rodada de revisão: pede o rascunho corrigido e, se o modelo resolver
+   * pesquisar antes, executa as ferramentas e volta a pedir. Sem esse laço, a
+   * resposta com tool_calls chegaria aqui como "revisão fora do envelope" e a
+   * correção seria descartada.
+   * @param {Array<Object>} messages
+   * @param {boolean} allowTools
+   * @returns {Promise<string>} Conteúdo textual da revisão
+   */
+  async #completeRevision(messages, allowTools) {
+    for (let round = 0; round < MAX_REVISION_ROUNDS; round++) {
+      const lastRound = round === MAX_REVISION_ROUNDS - 1;
+
+      const { message } = await this.#client.chat(messages, {
+        tools: this.#tools,
+        model: this.#model,
+        // Na última rodada o texto é obrigatório, senão a revisão se perde em
+        // pesquisa e volta sem rascunho nenhum.
+        ...(allowTools && !lastRound ? {} : { toolChoice: 'none' }),
+        timeout: WRITE_TIMEOUT_MS,
+      });
+      messages.push(message);
+
+      if (!message.tool_calls?.length) return message.content?.trim() ?? '';
 
       for (const toolCall of message.tool_calls) {
         messages.push({
@@ -258,7 +336,7 @@ Não adicione comentários, introduções ou explicações fora do envelope. Com
       }
     }
 
-    throw new Error('O modelo não gerou o rascunho no formato correto após várias tentativas ou pesquisou demais.');
+    return '';
   }
 
   /**

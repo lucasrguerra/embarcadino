@@ -120,7 +120,7 @@ Dois documentos guiam o conteúdo:
 
 - **`DESIGN.md`** — como as mensagens do bot são escritas e formatadas.
 - **`src/modules/writer/writer.prompt.js`** — como uma publicação do blog é escrita. As regras foram extraídas do export completo do WordPress do Ciência Embarcada (32 publicações), não inventadas.
-- **`src/modules/writer/writer.seo.js`** — os critérios de SEO e legibilidade que o rascunho precisa cumprir (título, meta description, transições, Flesch, links, subtítulos). O prompt orienta; este módulo mede e devolve o rascunho ao modelo enquanto houver reprovação. O que sobra vai como aviso na mensagem do Telegram.
+- **`src/modules/writer/writer.seo.js`** — os critérios de SEO e legibilidade que o rascunho precisa cumprir (tamanho mínimo, título, meta description, transições, Flesch, referências, subtítulos). O prompt orienta; este módulo mede e devolve o rascunho ao modelo enquanto houver reprovação. O que sobra vai como aviso na mensagem do Telegram.
 
 ---
 
@@ -148,7 +148,7 @@ echo -n 'seu_token_aqui' | base64 -w0
 | `WORDPRESS_APP_PASSWORD_BASE64` | não | Senha de aplicação, em base64. Vai junto com a de cima |
 | `LLM_MODEL` | não | Modelo do assistente (precisa suportar tool calling) |
 | `LLM_WRITER_MODEL` | não | Modelo da redação. Padrão: o mesmo do assistente |
-| `LLM_IMAGE_MODEL` | não | Modelo das ilustrações do post. Padrão: `google/gemini-3.1-flash-image` |
+| `LLM_IMAGE_MODEL` | não | Modelo das ilustrações do post. Padrão: `gemini-3.1-flash-image` |
 | `LLM_BASE_URL` | não | Padrão: `https://openrouter.ai/api/v1` |
 | `BLOG_BASE_URL` | não | Padrão: `https://cienciaembarcada.com.br` |
 | `SEARXNG_BASE_URL` | não | Padrão no compose: `http://searxng:8080`. Fora dele, a busca usa DuckDuckGo |

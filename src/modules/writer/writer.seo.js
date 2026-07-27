@@ -21,6 +21,18 @@
  */
 
 const LIMITS = {
+  /**
+   * Piso de palavras do corpo. Não é critério do plugin de SEO — é a régua do
+   * blog, que a seção "Tamanho" do prompt já definia e nada verificava. Sem
+   * medir, o modelo entrega 600 palavras e o post fica raso.
+   */
+  minWords: 800,
+  /**
+   * Fontes externas citadas. Um post técnico com uma referência só é um post
+   * que não foi pesquisado — e foi exatamente o sintoma que apareceu quando o
+   * modelo pulou o read_page.
+   */
+  minExternalLinks: 3,
   titleChars: 60,
   excerptChars: 160,
   /** Abaixo disso o resumo desperdiça espaço da SERP; o plugin também reclama. */
@@ -77,6 +89,22 @@ export function auditDraft({ title, excerpt, content }, { blogBaseUrl } = {}) {
   const issues = [];
   const text = stripBlocks(content);
   const sentences = splitSentences(text);
+  const words = countWordsIn(text);
+
+  // Tamanho vem primeiro na lista porque é o problema mais caro de corrigir e o
+  // que mais muda o rascunho: o modelo precisa vê-lo antes dos ajustes de forma.
+  if (words < LIMITS.minWords) {
+    issues.push({
+      code: 'content-short',
+      blocking: true,
+      message: `O texto tem ${words} palavras (mínimo: ${LIMITS.minWords}).`,
+      fix:
+        `Amplie o post para pelo menos ${LIMITS.minWords} palavras — faltam cerca de ${LIMITS.minWords - words}. ` +
+        'Aprofunde cada seção existente: explique o mecanismo por trás do problema, dê o número concreto da ' +
+        'especificação (tensão, tempo, tamanho de memória), mostre como identificar o sintoma no console e ' +
+        'inclua o trecho de código ou o comando envolvido. Não adicione seções vazias nem repita o que já foi dito.',
+    });
+  }
 
   const titleLength = String(title ?? '').trim().length;
   if (titleLength > LIMITS.titleChars) {
@@ -173,9 +201,8 @@ export function auditDraft({ title, excerpt, content }, { blogBaseUrl } = {}) {
   const internal = links.filter((href) => isInternal(href, blogBaseUrl));
   const external = links.filter((href) => !isInternal(href, blogBaseUrl));
 
-  // Link interno depende do blog_search ter encontrado post relacionado, e link
-  // externo, de a pesquisa ter dado fonte citável. Reportamos, mas não travamos
-  // a entrega por isso: pode não haver o que linkar.
+  // Link interno depende de o blog_search ter encontrado post relacionado —
+  // pode não haver o que linkar, então isso é aviso, não bloqueio.
   if (internal.length === 0) {
     issues.push({
       code: 'internal-links',
@@ -184,12 +211,19 @@ export function auditDraft({ title, excerpt, content }, { blogBaseUrl } = {}) {
       fix: 'Use blog_search e linke pelo menos uma publicação relacionada do Ciência Embarcada, com a URL real retornada pela ferramenta.',
     });
   }
-  if (external.length === 0) {
+
+  // Fonte externa é outra história: o redator é obrigado a pesquisar antes de
+  // escrever, então a ausência de referência significa texto escrito de cabeça.
+  const uniqueExternal = new Set(external.map(hostOf)).size;
+  if (uniqueExternal < LIMITS.minExternalLinks) {
     issues.push({
       code: 'external-links',
-      blocking: false,
-      message: 'O texto não tem link externo.',
-      fix: 'Linke as fontes usadas na pesquisa (documentação oficial, datasheet, veículo técnico) na seção de referências.',
+      blocking: true,
+      message: `O texto cita ${uniqueExternal} fonte(s) externa(s) distinta(s) (mínimo: ${LIMITS.minExternalLinks}).`,
+      fix:
+        `Leia mais fontes com read_page e cite pelo menos ${LIMITS.minExternalLinks} referências externas distintas ` +
+        'na seção Referências — documentação oficial, datasheet do fabricante, aviso de segurança ou veículo técnico. ' +
+        'Cada uma precisa ter sido lida de fato; não invente URL.',
     });
   }
 
@@ -369,6 +403,20 @@ function isInternal(href, blogBaseUrl) {
     return new URL(href).host === new URL(blogBaseUrl).host;
   } catch {
     return false;
+  }
+}
+
+/**
+ * Host de uma URL, usado para contar fontes distintas — três links para a mesma
+ * documentação são uma referência, não três.
+ * @param {string} href
+ * @returns {string}
+ */
+function hostOf(href) {
+  try {
+    return new URL(href).host.toLowerCase();
+  } catch {
+    return String(href ?? '').toLowerCase();
   }
 }
 

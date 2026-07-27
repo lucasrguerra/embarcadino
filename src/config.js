@@ -31,6 +31,21 @@ function parseIdList(envKey) {
     .filter((id) => Number.isInteger(id));
 }
 
+/**
+ * Ajusta o identificador do modelo ao provedor em uso.
+ *
+ * Só o OpenRouter usa o prefixo do fabricante. Nas APIs nativas (Google AI
+ * Studio, Groq…) o mesmo identificador com prefixo dá 404 — erro que só
+ * apareceria em produção, na primeira chamada real.
+ * @param {string} model
+ * @param {string} baseUrl
+ * @returns {string}
+ */
+export function modelFor(model, baseUrl) {
+  if (/openrouter\.ai/i.test(baseUrl)) return model;
+  return model.replace(/^(google|openai|anthropic|meta-llama|mistralai)\//i, '');
+}
+
 class Config {
   get telegram() {
     return {
@@ -41,17 +56,28 @@ class Config {
   }
 
   get ai() {
+    const baseUrl = process.env.LLM_BASE_URL || 'https://openrouter.ai/api/v1';
+
     return {
-      baseUrl: process.env.LLM_BASE_URL || 'https://openrouter.ai/api/v1',
+      baseUrl,
       apiKey: fromBase64('LLM_API_KEY_BASE64'),
-      model: process.env.LLM_MODEL || 'google/gemini-2.0-flash-001',
+      model: modelFor(process.env.LLM_MODEL || 'google/gemini-2.0-flash-001', baseUrl),
       /** Modelo usado na redação de posts — tarefa longa, vale um modelo mais forte. */
-      writerModel: process.env.LLM_WRITER_MODEL || process.env.LLM_MODEL || 'google/gemini-2.0-flash-001',
+      writerModel: modelFor(
+        process.env.LLM_WRITER_MODEL || process.env.LLM_MODEL || 'google/gemini-2.0-flash-001',
+        baseUrl
+      ),
       /**
        * Modelo de geração de imagem das ilustrações do post. Responde no mesmo
        * endpoint de chat, com a modalidade de imagem pedida na saída.
+       *
+       * O identificador muda conforme o provedor: o OpenRouter usa o prefixo do
+       * fabricante ("google/gemini-…"), a API do Google AI Studio não aceita
+       * esse prefixo e responde 404. Como o `baseUrl` diz qual dos dois está em
+       * uso, normalizamos aqui em vez de deixar o erro aparecer no fim de uma
+       * redação de vários minutos.
        */
-      imageModel: process.env.LLM_IMAGE_MODEL || 'google/gemini-3.1-flash-image',
+      imageModel: modelFor(process.env.LLM_IMAGE_MODEL || 'gemini-3.1-flash-image', baseUrl),
       /** Enviados ao OpenRouter para atribuição do app no ranking deles. */
       appUrl: process.env.LLM_APP_URL || 'https://cienciaembarcada.com.br',
       appName: process.env.LLM_APP_NAME || 'Embarcadino',

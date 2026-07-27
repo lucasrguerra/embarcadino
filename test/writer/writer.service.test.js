@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { parseDraft, parseCategories, countWords } from '../../src/modules/writer/writer.service.js';
 import { parseBriefing } from '../../src/modules/writer/handlers/index.js';
+import { seoReadyEnvelope } from './draft.fixture.js';
 
 const ENVELOPE = `===TITULO===
 ESP32-C6: o chip do Matter
@@ -96,7 +97,7 @@ test('WriterService envia toolChoice: "none" após resposta sem marcadores', asy
 
   assert.equal(draft.title, 'ESP32-C6: o chip do Matter');
   // 2 chamadas de redação + as revisões de SEO, que o envelope mínimo do teste
-  // nunca satisfaz (sem imagem, sem link, resumo curto).
+  // nunca satisfaz (curto, sem imagem, sem fontes).
   assert.ok(calls.length >= 2);
   // No primeiro call, toolChoice não foi 'none'
   assert.equal(calls[0].options.toolChoice, undefined);
@@ -107,119 +108,160 @@ test('WriterService envia toolChoice: "none" após resposta sem marcadores', asy
   assert.equal(calls[1].options.tools.length, 1);
 });
 
+/** Turno em que o modelo lê duas fontes — pré-requisito para o rascunho ser aceito. */
+const READS_SOURCES = {
+  role: 'assistant',
+  tool_calls: [
+    { id: '1', function: { name: 'read_page', arguments: '{}' } },
+    { id: '2', function: { name: 'read_page', arguments: '{}' } },
+  ],
+};
+
 /**
- * Envelope aprovado na auditoria: título curto, resumo na faixa da meta
- * description, imagem, subtítulo, link interno, link externo e transições.
- * @param {string} title
- * @returns {string}
+ * Cliente falso que devolve uma resposta por chamada, na ordem dada.
+ * @param {Array<Object|string>} turns - String vira conteúdo de assistant
+ * @returns {{ client: Object, calls: Array<Object> }}
  */
-function seoReadyEnvelope(title = 'ESP32-C6: o chip do Matter') {
-  return `===TITULO===
-${title}
+function conversation(turns) {
+  const calls = [];
+  const client = {
+    async chat(messages, options) {
+      const turn = turns[Math.min(calls.length, turns.length - 1)];
+      calls.push({ last: messages[messages.length - 1], options });
+      return { message: typeof turn === 'string' ? { role: 'assistant', content: turn } : turn };
+    },
+  };
 
-===RESUMO===
-O ESP32-C6 traz Wi-Fi 6 e Thread no mesmo chip, e por isso muda o projeto de nós Matter em rede.
+  return { client, calls };
+}
 
-===CATEGORIAS===
-iot, sistemas-embarcados
-
-===CONTEUDO===
-<!-- wp:image -->
-<figure class="wp-block-image"><img src="" alt="Placa ESP32-C6"/></figure>
-<!-- /wp:image -->
-
-<!-- wp:paragraph -->
-<p>O ESP32-C6 traz Wi-Fi 6 e Thread. Por isso o projeto muda. Além disso, o rádio é único.</p>
-<!-- /wp:paragraph -->
-
-<!-- wp:heading {"level":3} -->
-<h3>O rádio</h3>
-<!-- /wp:heading -->
-
-<!-- wp:paragraph -->
-<p>No entanto, o custo sobe. Em resumo, vale a pena. Veja a <a href="https://cienciaembarcada.com.br/lorawan">nota sobre LoRaWAN</a> e o <a href="https://espressif.com/ds">datasheet</a>.</p>
-<!-- /wp:paragraph -->`;
+/** @returns {Record<string, Function>} */
+function dispatcher() {
+  return { read_page: async () => ({ text: 'conteúdo lido' }), web_search: async () => [] };
 }
 
 test('WriterService devolve o rascunho ao modelo quando a auditoria de SEO reprova', async () => {
   const longTitle = 'ESP32-C6 e o protocolo Matter: tudo o que muda no projeto de nós de rede';
-  const responses = [seoReadyEnvelope(longTitle), seoReadyEnvelope()];
-  const calls = [];
-
-  const mockClient = {
-    async chat(messages, options) {
-      calls.push({ last: messages[messages.length - 1], options });
-      return { message: { role: 'assistant', content: responses[calls.length - 1] } };
-    },
-  };
+  const { client, calls } = conversation([
+    READS_SOURCES,
+    seoReadyEnvelope(longTitle),
+    seoReadyEnvelope(),
+  ]);
 
   const { WriterService } = await import('../../src/modules/writer/writer.service.js');
-  const service = new WriterService(mockClient, [{ type: 'function' }], {});
-  const draft = await service.write({ theme: 'ESP32-C6' });
+  const draft = await new WriterService(client, [{ type: 'function' }], dispatcher()).write({
+    theme: 'ESP32-C6',
+  });
 
-  assert.equal(calls.length, 2);
-  assert.match(calls[1].last.content, /O título tem 72 caracteres/);
-  assert.equal(calls[1].options.toolChoice, 'none');
+  assert.equal(calls.length, 3);
+  assert.match(calls[2].last.content, /O título tem 72 caracteres/);
+  assert.equal(calls[2].options.toolChoice, 'none');
   assert.equal(draft.title, 'ESP32-C6: o chip do Matter');
   assert.deepEqual(draft.seo, []);
 });
 
 test('WriterService não pede revisão quando o rascunho já passa na auditoria', async () => {
-  let calls = 0;
-  const mockClient = {
-    async chat() {
-      calls++;
-      return { message: { role: 'assistant', content: seoReadyEnvelope() } };
-    },
-  };
+  const { client, calls } = conversation([READS_SOURCES, seoReadyEnvelope()]);
 
   const { WriterService } = await import('../../src/modules/writer/writer.service.js');
-  const service = new WriterService(mockClient, [], {});
-  const draft = await service.write({ theme: 'ESP32-C6' });
+  const draft = await new WriterService(client, [], dispatcher()).write({ theme: 'ESP32-C6' });
 
-  assert.equal(calls, 1);
+  assert.equal(calls.length, 2);
   assert.deepEqual(draft.seo, []);
 });
 
-test('WriterService mantém o rascunho anterior quando a revisão corta o texto', async () => {
-  const longTitle = 'ESP32-C6 e o protocolo Matter: tudo o que muda no projeto de nós de rede';
-  const mutilated = `===TITULO===
-Curto
-
-===CONTEUDO===
-<!-- wp:paragraph --><p>Nada.</p><!-- /wp:paragraph -->`;
-  const responses = [seoReadyEnvelope(longTitle), mutilated];
-  let calls = 0;
-
-  const mockClient = {
-    async chat() {
-      return { message: { role: 'assistant', content: responses[calls++] } };
-    },
-  };
+test('WriterService exige read_page antes de aceitar o rascunho', async () => {
+  const { client, calls } = conversation([
+    { role: 'assistant', tool_calls: [{ id: '1', function: { name: 'web_search', arguments: '{}' } }] },
+    seoReadyEnvelope(),
+    READS_SOURCES,
+    seoReadyEnvelope(),
+  ]);
 
   const { WriterService } = await import('../../src/modules/writer/writer.service.js');
-  const service = new WriterService(mockClient, [], {});
-  const draft = await service.write({ theme: 'ESP32-C6' });
+  await new WriterService(client, [{ type: 'function' }], dispatcher()).write({ theme: 'ESP32-C6' });
+
+  // A terceira chamada carrega a cobrança de leitura de fontes.
+  assert.match(calls[2].last.content, /read_page/);
+  assert.match(calls[2].last.content, /fontes primárias/);
+  // E as tools continuam liberadas, senão ele não teria como pesquisar.
+  assert.notEqual(calls[2].options.toolChoice, 'none');
+});
+
+test('WriterService descarta revisão que corta o texto', async () => {
+  const longTitle = 'ESP32-C6 e o protocolo Matter: tudo o que muda no projeto de nós de rede';
+  const mutilated = `===TITULO===\nCurto\n\n===CONTEUDO===\n<!-- wp:paragraph --><p>Nada.</p><!-- /wp:paragraph -->`;
+  const { client } = conversation([READS_SOURCES, seoReadyEnvelope(longTitle), mutilated]);
+
+  const { WriterService } = await import('../../src/modules/writer/writer.service.js');
+  const draft = await new WriterService(client, [], dispatcher()).write({ theme: 'ESP32-C6' });
 
   assert.equal(draft.title, longTitle);
+  assert.ok(draft.words > 800, `esperava manter o texto longo, veio com ${draft.words}`);
   assert.ok(draft.seo.some((issue) => issue.code === 'title-length'));
+});
+
+test('WriterService rejeita revisão que perde mais de 5% do texto', async () => {
+  const longTitle = 'ESP32-C6 e o protocolo Matter: tudo o que muda no projeto de nós de rede';
+  const { client } = conversation([
+    READS_SOURCES,
+    seoReadyEnvelope(longTitle, { sentences: 200 }),
+    // Mesmo rascunho, com 60% das frases: forma corrigida à custa de conteúdo.
+    seoReadyEnvelope(undefined, { sentences: 120 }),
+  ]);
+
+  const { WriterService } = await import('../../src/modules/writer/writer.service.js');
+  const draft = await new WriterService(client, [], dispatcher()).write({ theme: 'ESP32-C6' });
+
+  assert.equal(draft.title, longTitle, 'a revisão encolhida deveria ter sido descartada');
 });
 
 test('WriterService entrega o rascunho mesmo se a chamada de revisão falhar', async () => {
   const longTitle = 'ESP32-C6 e o protocolo Matter: tudo o que muda no projeto de nós de rede';
   let calls = 0;
-
-  const mockClient = {
+  const client = {
     async chat() {
-      if (calls++ > 0) throw new Error('502 upstream');
-      return { message: { role: 'assistant', content: seoReadyEnvelope(longTitle) } };
+      calls++;
+      if (calls === 1) return { message: READS_SOURCES };
+      if (calls === 2) return { message: { role: 'assistant', content: seoReadyEnvelope(longTitle) } };
+      throw new Error('502 upstream');
     },
   };
 
   const { WriterService } = await import('../../src/modules/writer/writer.service.js');
-  const service = new WriterService(mockClient, [], {});
-  const draft = await service.write({ theme: 'ESP32-C6' });
+  const draft = await new WriterService(client, [], dispatcher()).write({ theme: 'ESP32-C6' });
 
   assert.equal(draft.title, longTitle);
-  assert.ok(draft.words > 0);
+  assert.ok(draft.words > 800);
+});
+
+test('WriterService libera as ferramentas na revisão quando faltam fontes', async () => {
+  // Rascunho com uma fonte externa só: reprova em external-links.
+  const oneSource = seoReadyEnvelope().replace(
+    /<a href="https:\/\/www\.rfc-editor\.org[^"]*"/,
+    '<a href="https://docs.espressif.com/outro"'
+  ).replace(/<a href="https:\/\/csa-iot\.org[^"]*"/, '<a href="https://docs.espressif.com/mais"');
+
+  const { client, calls } = conversation([READS_SOURCES, oneSource, READS_SOURCES, seoReadyEnvelope()]);
+
+  const { WriterService } = await import('../../src/modules/writer/writer.service.js');
+  const draft = await new WriterService(client, [{ type: 'function' }], dispatcher()).write({
+    theme: 'ESP32-C6',
+  });
+
+  // O pedido de revisão cobra as referências…
+  assert.match(calls[2].last.content, /fonte\(s\) externa\(s\)/);
+  // …e chega com as tools liberadas, senão o modelo não teria como ler a fonte.
+  assert.notEqual(calls[2].options.toolChoice, 'none');
+  assert.deepEqual(draft.seo, []);
+});
+
+test('WriterService bloqueia as ferramentas na revisão puramente de forma', async () => {
+  const longTitle = 'ESP32-C6 e o protocolo Matter: tudo o que muda no projeto de nós de rede';
+  const { client, calls } = conversation([READS_SOURCES, seoReadyEnvelope(longTitle), seoReadyEnvelope()]);
+
+  const { WriterService } = await import('../../src/modules/writer/writer.service.js');
+  await new WriterService(client, [{ type: 'function' }], dispatcher()).write({ theme: 'ESP32-C6' });
+
+  assert.equal(calls[2].options.toolChoice, 'none');
 });

@@ -10,27 +10,10 @@ import {
   splitSentences,
   stripBlocks,
 } from '../../src/modules/writer/writer.seo.js';
+import { cleanDraft, cleanContent } from './draft.fixture.js';
 
-/** Rascunho que passa em tudo, usado como base para variar um problema por vez. */
-const CLEAN = {
-  title: 'ESP32-C6: o chip do Matter',
-  excerpt: 'O ESP32-C6 traz Wi-Fi 6 e Thread no mesmo chip, e por isso muda o projeto de nós Matter.',
-  content: `<!-- wp:image -->
-<figure class="wp-block-image"><img src="" alt="Placa ESP32-C6"/></figure>
-<!-- /wp:image -->
-
-<!-- wp:paragraph -->
-<p>O ESP32-C6 traz Wi-Fi 6 e Thread. Por isso o projeto muda. Além disso, o rádio é único.</p>
-<!-- /wp:paragraph -->
-
-<!-- wp:heading {"level":3} -->
-<h3>O rádio</h3>
-<!-- /wp:heading -->
-
-<!-- wp:paragraph -->
-<p>No entanto, o custo sobe. Em resumo, vale a pena. Veja a <a href="https://cienciaembarcada.com.br/lorawan">nota sobre LoRaWAN</a> e o <a href="https://espressif.com/ds">datasheet</a>.</p>
-<!-- /wp:paragraph -->`,
-};
+/** Rascunho que passa em todos os critérios; cada teste estraga um de cada vez. */
+const CLEAN = cleanDraft();
 
 /**
  * @param {Object} overrides
@@ -60,19 +43,16 @@ test('auditDraft reprova resumo curto demais para a meta description', () => {
 });
 
 test('auditDraft reprova 3 frases seguidas com a mesma palavra inicial', () => {
-  const content = CLEAN.content.replace(
-    '<p>O ESP32-C6 traz Wi-Fi 6 e Thread. Por isso o projeto muda. Além disso, o rádio é único.</p>',
-    '<p>Ele traz Wi-Fi 6. Ele traz Thread. Ele traz Zigbee.</p>'
-  );
+  const content = `${CLEAN.content}\n<!-- wp:paragraph -->\n<p>Ele traz Wi-Fi 6. Ele traz Thread. Ele traz Zigbee.</p>\n<!-- /wp:paragraph -->`;
   assert.ok(codes({ content }).includes('consecutive-sentences'));
 });
 
 test('auditDraft reprova texto sem palavras de transição suficientes', () => {
-  const content = CLEAN.content
-    .replace('Por isso o projeto muda.', 'O projeto muda.')
-    .replace('Além disso, o rádio é único.', 'O rádio é único.')
-    .replace('No entanto, o custo sobe.', 'O custo sobe.')
-    .replace('Em resumo, vale a pena.', 'Vale a pena.');
+  // Remove o conectivo que abre cada frase da fixture, mantendo o resto igual.
+  const content = CLEAN.content.replace(
+    /(Além disso|No entanto|Por isso|Em resumo|Na prática|Por outro lado), /g,
+    ''
+  );
 
   assert.ok(codes({ content }).includes('transition-words'));
 });
@@ -103,8 +83,7 @@ test('auditDraft reprova parágrafo longo demais', () => {
 });
 
 test('auditDraft reprova trecho longo sem subtítulo', () => {
-  const content = `<!-- wp:image --><figure><img src="" alt="x"/></figure><!-- /wp:image -->
-<p>${'assim uma frase curta e clara. '.repeat(120)}</p>`;
+  const content = CLEAN.content.replace(/<h3[^>]*>[^<]*<\/h3>/g, '');
   assert.ok(codes({ content }).includes('subheading-distribution'));
 });
 
@@ -158,4 +137,37 @@ test('buildSeoRevisionRequest lista os problemas e proíbe encurtar o texto', ()
   assert.ok(request.includes('O título tem 72 caracteres.'));
   assert.ok(request.includes('Reescreva com até 60.'));
   assert.match(request, /não reduza o número de palavras/i);
+});
+
+test('auditDraft reprova texto abaixo do piso de 800 palavras', () => {
+  const issue = auditDraft(cleanDraft({ sentences: 30 })).find((i) => i.code === 'content-short');
+
+  assert.ok(issue);
+  assert.equal(issue.blocking, true);
+  assert.match(issue.fix, /Amplie/);
+});
+
+test('auditDraft aprova o tamanho quando o texto passa de 800 palavras', () => {
+  assert.ok(!auditDraft(cleanDraft()).some((i) => i.code === 'content-short'));
+});
+
+test('auditDraft exige 3 fontes externas distintas', () => {
+  const content = CLEAN.content
+    .replace(/<a href="https:\/\/www\.rfc-editor\.org[^<]*<\/a>/, 'o texto do CoAP')
+    .replace(/<a href="https:\/\/csa-iot\.org[^<]*<\/a>/, 'o guia do Matter');
+  const issue = auditDraft({ ...CLEAN, content }).find((i) => i.code === 'external-links');
+
+  assert.ok(issue);
+  assert.equal(issue.blocking, true);
+  assert.match(issue.message, /1 fonte/);
+});
+
+test('auditDraft conta fontes por domínio, não por link', () => {
+  // Três links, todos do mesmo host: uma referência só.
+  const content = CLEAN.content
+    .replace(/<a href="https:\/\/www\.rfc-editor\.org[^"]*"/, '<a href="https://docs.espressif.com/outro"')
+    .replace(/<a href="https:\/\/csa-iot\.org[^"]*"/, '<a href="https://docs.espressif.com/mais"');
+  const issue = auditDraft({ ...CLEAN, content }).find((i) => i.code === 'external-links');
+
+  assert.match(issue.message, /1 fonte/);
 });
