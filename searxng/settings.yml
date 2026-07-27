@@ -7,8 +7,27 @@
 #
 # Se um dia esta instância for exposta publicamente, ligue o limiter de volta
 # e mantenha o JSON restrito, senão ela vira um proxy de busca aberto.
+#
+# NÃO É DEFEITO: no boot aparece uma vez a linha
+#   ERROR:searx.botdetection: X-Forwarded-For nor X-Real-IP header is set!
+# Ela vem de um middleware WSGI que roda mesmo com o limiter desligado e só
+# constata que ninguém está atrás de um proxy reverso — que é exatamente o caso
+# aqui. É logada uma única vez por worker e não afeta busca nenhuma.
 
-use_default_settings: true
+# `remove` é o único jeito de o engine não ser carregado: `disabled: true` só o
+# esconde da busca, o SearXNG ainda importa o módulo e roda o init dele — e é
+# justamente no init que estes três estouram a cada boot:
+#   - ahmia e torch indexam .onion e exigem um proxy Tor que este container não
+#     tem ("can't register engine");
+#   - wikidata inicializa baixando as propriedades do query.wikidata.org, que
+#     responde 403 para IP de datacenter, e o erro vira stack trace no log.
+# Nenhum dos três contribui com resultado técnico para o que o bot pesquisa.
+use_default_settings:
+  engines:
+    remove:
+      - ahmia
+      - torch
+      - wikidata
 
 general:
   instance_name: 'Embarcadino Search'
@@ -45,7 +64,8 @@ outgoing:
   pool_maxsize: 20
 
 # Motores desligados por serem barulhentos ou irrelevantes para o conteúdo
-# técnico que o bot pesquisa.
+# técnico que o bot pesquisa. Aqui `disabled` basta: eles carregam sem erro,
+# só não devem entrar no resultado.
 engines:
   - name: bing
     disabled: true

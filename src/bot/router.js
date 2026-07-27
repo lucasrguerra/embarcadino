@@ -10,6 +10,7 @@
 import { adminOnly } from './middleware/admin.middleware.js';
 import { KnowledgeHandlers } from '../modules/knowledge/handlers/index.js';
 import { logger } from '../shared/logger.js';
+import { describeLlmFailure } from '../modules/ai/ai.errors.js';
 
 const HTML = { parse_mode: 'HTML', link_preview_options: { is_disabled: true } };
 
@@ -53,9 +54,11 @@ function wrap(handler) {
     } catch (err) {
       const name = handler.name || 'handler';
       logger.error('HANDLER', `Falha em ${name}`, err);
+      // Cota estourada e chave recusada não passam "daqui a pouco" — dizer isso
+      // manda o usuário repetir o comando à toa e esconde o problema real do log.
       await ctx
         .reply(
-          '⚠️ <b>Deu ruim aqui do meu lado</b>\n<i>└ Tenta de novo daqui a pouco</i>',
+          describeLlmFailure(err) ?? '⚠️ <b>Deu ruim aqui do meu lado</b>\n<i>└ Tenta de novo daqui a pouco</i>',
           { parse_mode: 'HTML' }
         )
         .catch(() => {});

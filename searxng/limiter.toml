@@ -1,0 +1,26 @@
+# Configuração do limiter (detecção de bot) do SearXNG.
+#
+# O limiter está desligado no settings.yml — esta instância não tem porta
+# publicada, só o container do bot fala com ela. O arquivo existe apenas porque
+# o módulo `searx.botdetection.config` é carregado no boot de qualquer forma e,
+# sem ele, avisa "missing config file: /etc/searxng/limiter.toml" a cada start.
+#
+# Se um dia a instância for exposta na internet, ligue `server.limiter: true`
+# no settings.yml e ajuste os valores abaixo.
+
+[botdetection]
+# Nenhum proxy reverso na frente: o IP de origem é o próprio endereço da
+# conexão, então não há prefixo de rede a agregar.
+# (Estas chaves viviam em [real_ip] até a 2025.x — a seção antiga ainda é aceita,
+# mas emite DeprecationWarning no boot.)
+ipv4_prefix = 32
+ipv6_prefix = 48
+
+[botdetection.ip_limit]
+# `link_token` exige que o cliente busque um recurso extra da página HTML para
+# provar que é um navegador. O bot consome a API JSON, então precisa ficar off.
+link_token = false
+
+[botdetection.ip_lists]
+block_ip = []
+pass_ip = []

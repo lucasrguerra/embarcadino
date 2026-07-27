@@ -7,6 +7,7 @@
 
 import { commandArgument } from '../../../bot/command.utils.js';
 import { logger } from '../../../shared/logger.js';
+import { describeLlmFailure } from '../../ai/ai.errors.js';
 
 const HTML = { parse_mode: 'HTML', link_preview_options: { is_disabled: true } };
 
@@ -40,7 +41,9 @@ export class WriterHandlers {
         draft = await service.write(briefing);
       } catch (err) {
         logger.error('WRITER', `Falha ao redigir sobre "${briefing.theme}"`, err);
-        return ctx.reply(formatter.formatError(), HTML);
+        // Cota e credencial têm explicação própria: a mensagem padrão sugere
+        // delimitar melhor o tema, conselho inútil quando o tema não é o problema.
+        return ctx.reply(describeLlmFailure(err) ?? formatter.formatError(), HTML);
       } finally {
         clearInterval(typing);
       }

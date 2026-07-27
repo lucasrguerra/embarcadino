@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { WriterHandlers } from '../../src/modules/writer/handlers/index.js';
 import { WriterFormatter } from '../../src/modules/writer/writer.formatter.js';
+import { LlmQuotaError } from '../../src/modules/ai/ai.errors.js';
 
 const DRAFT = {
   title: 'ESP32-C6 e o Matter',
@@ -79,6 +80,28 @@ test('se o WordPress recusar, o texto não se perde — vai no arquivo', async (
   assert.ok(
     ctx.reply.mock.calls.some(({ arguments: [text] }) => /não consegui salvar o rascunho/i.test(text))
   );
+});
+
+test('cota estourada é explicada como cota, não como "tenta de novo"', async () => {
+  // O sintoma que motivou isso: a cota diária acabou e o bot respondeu
+  // "tenta de novo, de preferência com o tema mais delimitado" — mandando o
+  // Lucas reescrever o tema quando o tema nunca foi o problema.
+  const resetAt = new Date(Date.now() + 5 * 60 * 60 * 1000);
+  const service = {
+    write: mock.fn(async () => {
+      throw new LlmQuotaError('Rate limit exceeded: free-models-per-day', { resetAt });
+    }),
+  };
+  const blogService = { canWrite: true, createDraft: mock.fn(async () => ({})) };
+  const handlers = new WriterHandlers(service, new WriterFormatter(), blogService);
+  const ctx = createCtx();
+
+  await handlers.post(ctx);
+
+  const reply = ctx.reply.mock.calls.at(-1).arguments[0];
+  assert.match(reply, /cota/i);
+  assert.doesNotMatch(reply, /tema mais delimitado/);
+  assert.equal(blogService.createDraft.mock.callCount(), 0);
 });
 
 test('falha na redação não tenta salvar nada no blog', async () => {
