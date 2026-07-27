@@ -34,10 +34,10 @@ export class AiClient {
   /**
    * Envia uma requisição de chat completion, com suporte a tool calling.
    * @param {Array<Object>} messages
-   * @param {{ tools?: Array<Object>, model?: string, temperature?: number, maxTokens?: number, timeout?: number }} [options]
+   * @param {{ tools?: Array<Object>, toolChoice?: string | Object, model?: string, temperature?: number, maxTokens?: number, timeout?: number }} [options]
    * @returns {Promise<{ message: Object, finishReason: string }>}
    */
-  async chat(messages, { tools = [], model, temperature, maxTokens, timeout } = {}) {
+  async chat(messages, { tools = [], toolChoice, model, temperature, maxTokens, timeout } = {}) {
     const body = {
       model: model ?? this.#model,
       messages,
@@ -45,7 +45,7 @@ export class AiClient {
 
     if (tools.length > 0) {
       body.tools = tools;
-      body.tool_choice = 'auto';
+      body.tool_choice = toolChoice ?? 'auto';
     }
     if (temperature !== undefined) body.temperature = temperature;
     if (maxTokens !== undefined) body.max_tokens = maxTokens;

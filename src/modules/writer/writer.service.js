@@ -87,12 +87,15 @@ export class WriterService {
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       const remainingRounds = MAX_TOOL_ROUNDS - round;
 
-      // Nos últimos rounds, omitir as tools força o modelo a produzir texto.
-      const sendTools = remainingRounds > FORCE_TEXT_ROUNDS;
+      // Nos últimos rounds ou após o primeiro rascunho sem marcadores,
+      // forçamos o modelo a responder com texto (tool_choice: 'none').
+      // Manter a lista de `tools` na requisição é OBRIGATÓRIO para que as APIs
+      // (OpenAI/OpenRouter) validem os `tool_calls` presentes no histórico.
+      const forceText = remainingRounds <= FORCE_TEXT_ROUNDS || markerRetries > 0;
 
       // Quando faltam poucos rounds e ainda não recebemos o rascunho,
       // injetamos um aviso para o modelo encerrar a pesquisa.
-      if (remainingRounds === NUDGE_ROUNDS_BEFORE_END && sendTools) {
+      if (remainingRounds === NUDGE_ROUNDS_BEFORE_END && !forceText) {
         logger.info('WRITER', 'Injetando nudge para o modelo parar de pesquisar e redigir.');
         messages.push({
           role: 'user',
@@ -104,9 +107,9 @@ export class WriterService {
       }
 
       const { message } = await this.#client.chat(messages, {
-        tools: sendTools ? this.#tools : [],
+        tools: this.#tools,
         model: this.#model,
-        ...(!sendTools ? { timeout: WRITE_TIMEOUT_MS } : {}),
+        ...(forceText ? { toolChoice: 'none', timeout: WRITE_TIMEOUT_MS } : {}),
       });
       messages.push(message);
 

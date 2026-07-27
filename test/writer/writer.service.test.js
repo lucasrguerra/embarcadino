@@ -74,3 +74,33 @@ test('parseBriefing aceita só o tema', () => {
 test('parseBriefing devolve null sem tema', () => {
   assert.equal(parseBriefing('   '), null);
 });
+
+test('WriterService envia toolChoice: "none" após resposta sem marcadores', async () => {
+  const calls = [];
+  const mockClient = {
+    async chat(messages, options) {
+      calls.push({ messages: [...messages], options });
+      if (calls.length === 1) {
+        // Primeira resposta: sem marcadores
+        return { message: { role: 'assistant', content: 'Texto sem marcadores' } };
+      }
+      // Segunda resposta: com marcadores
+      return { message: { role: 'assistant', content: ENVELOPE } };
+    },
+  };
+
+  const { WriterService } = await import('../../src/modules/writer/writer.service.js');
+  const service = new WriterService(mockClient, [{ type: 'function' }], {});
+
+  const draft = await service.write({ theme: 'ESP32-C6' });
+
+  assert.equal(draft.title, 'ESP32-C6: o chip do Matter');
+  assert.equal(calls.length, 2);
+  // No primeiro call, toolChoice não foi 'none'
+  assert.equal(calls[0].options.toolChoice, undefined);
+  // No segundo call (retry), toolChoice foi 'none' para impedir novas chamadas a ferramentas
+  assert.equal(calls[1].options.toolChoice, 'none');
+  // Ambas as chamadas passaram o array de tools para manter validade de esquema da API
+  assert.equal(calls[0].options.tools.length, 1);
+  assert.equal(calls[1].options.tools.length, 1);
+});
