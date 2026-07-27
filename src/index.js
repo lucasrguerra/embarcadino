@@ -89,6 +89,9 @@ const aiHandlers = new AiHandlers(aiService, aiFormatter);
 
 const writerService = new WriterService(aiClient, AI_TOOLS, toolDispatcher, {
   model: config.ai.writerModel,
+  // A auditoria de SEO precisa saber qual host é "interno" pra distinguir link
+  // interno de externo.
+  blogBaseUrl: config.blog.baseUrl,
 });
 const writerFormatter = new WriterFormatter();
 const writerHandlers = new WriterHandlers(writerService, writerFormatter, blogService);

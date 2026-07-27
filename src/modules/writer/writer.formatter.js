@@ -12,11 +12,11 @@ const WRITER_EMOJI = '✍️';
 export class WriterFormatter {
   /**
    * Ficha do rascunho pronto.
-   * @param {{ title: string, excerpt: string, categories: string[], words: number }} draft
+   * @param {{ title: string, excerpt: string, categories: string[], words: number, seo?: Array<{ message: string }> }} draft
    * @param {{ editLink: string } | null} [published] - Rascunho criado no WordPress, se houve
    * @returns {string} HTML
    */
-  formatSummary({ title, excerpt, categories, words }, published = null) {
+  formatSummary({ title, excerpt, categories, words, seo = [] }, published = null) {
     const lines = [
       `${WRITER_EMOJI} <b>${escapeHtml(title)}</b>`,
       `<i>└ ${escapeHtml(excerpt)}</i>`,
@@ -27,6 +27,15 @@ export class WriterFormatter {
     if (categories.length > 0) {
       lines.push(`<i>└ <code>${escapeHtml(categories.join(' · '))}</code></i>`);
     }
+
+    // O que a auditoria não conseguiu corrigir sozinha vira aviso: melhor o
+    // Lucas saber o que o plugin vai apontar antes de abrir o editor.
+    lines.push(
+      seo.length === 0
+        ? '<i>└ SEO e legibilidade: sem pendências ✅</i>'
+        : `<i>└ SEO e legibilidade: ${pluralize(seo.length, 'pendência', 'pendências')}</i>\n` +
+            seo.map(({ message }) => `   <i>· ${escapeHtml(message)}</i>`).join('\n')
+    );
 
     lines.push(
       '',

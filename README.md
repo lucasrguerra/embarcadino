@@ -119,6 +119,7 @@ Dois documentos guiam o conteúdo:
 
 - **`DESIGN.md`** — como as mensagens do bot são escritas e formatadas.
 - **`src/modules/writer/writer.prompt.js`** — como uma publicação do blog é escrita. As regras foram extraídas do export completo do WordPress do Ciência Embarcada (32 publicações), não inventadas.
+- **`src/modules/writer/writer.seo.js`** — os critérios de SEO e legibilidade que o rascunho precisa cumprir (título, meta description, transições, Flesch, links, subtítulos). O prompt orienta; este módulo mede e devolve o rascunho ao modelo enquanto houver reprovação. O que sobra vai como aviso na mensagem do Telegram.
 
 ---
 

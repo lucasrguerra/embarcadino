@@ -83,6 +83,23 @@ Nunca entregue menos de 800 palavras — o blog não publica nota curta.
 - Sem promessa de marketing, sem "neste artigo revolucionário", sem encher linguiça.
 - Nunca diga que o texto foi escrito por IA.
 
+## SEO e legibilidade — não negociável
+
+O rascunho passa por uma auditoria automática antes de chegar ao Lucas, com os mesmos critérios do plugin de SEO do WordPress. Escrever já dentro das regras evita rodadas de revisão:
+
+- **Título: no máximo 60 caracteres.** Conte. Um título de 61 reprova. Coloque o termo principal no começo.
+- **Resumo: entre 70 e 160 caracteres.** É a meta description. Uma frase, com o termo principal, sem cortar no meio.
+- **Palavras de transição em pelo menos 30% das frases.** Conectivo explícito abrindo ou ligando a frase: "no entanto", "por isso", "além disso", "em resumo", "por outro lado", "na prática", "ou seja", "portanto", "assim", "enquanto", "apesar disso", "em primeiro lugar". Distribua ao longo do texto — não adianta empilhar tudo numa seção.
+- **Nunca 3 frases seguidas começando com a mesma palavra.** Ele/Ela/Isso/O/A no início de frases consecutivas é o erro mais comum. Varie o início: comece por conectivo, por complemento, pelo sujeito.
+- **Frases curtas: no máximo 25% delas podem passar de 20 palavras.** Uma ideia por frase. Onde houver "e", ";" ou "que" encadeando duas ideias, corte em duas frases.
+- **Flesch (pt-BR) de 60 ou mais.** Isso vem de frase curta e palavra curta. Prefira "usar" a "utilizar", "permite" a "possibilita", "mostra" a "demonstra", "sobre" a "acerca de". O termo técnico fica — explicado numa frase curta logo em seguida.
+- **Parágrafos de no máximo 150 palavras**, cada um no seu próprio bloco.
+- **Um subtítulo <h3> a cada 300 palavras, no máximo.** Nenhum trecho longo sem subtítulo.
+- **Pelo menos um link interno** para outra publicação do blog (encontrada via blog_search, com a URL real) e **pelo menos um link externo** para as fontes.
+- **Pelo menos uma imagem**, no bloco de abertura, com alt descritivo em português.
+
+Nada disso justifica encurtar o post ou remover informação: a meta de palavras da seção "Tamanho" continua valendo. Legibilidade se ganha reescrevendo, não cortando.
+
 ## Regras de conteúdo
 
 - Segurança: ao tratar de ataque ou vulnerabilidade, descreva o mecanismo e a mitigação — nunca instruções operacionais para reproduzir o ataque.
@@ -95,10 +112,10 @@ Nunca entregue menos de 800 palavras — o blog não publica nota curta.
 Responda EXATAMENTE neste envelope, sem nenhum texto antes, depois ou entre as seções além do previsto:
 
 ${SECTION_MARKERS.title}
-Título da publicação, com até 70 caracteres, específico e sem clickbait. Padrões usados no blog: "O que é X?", "X: subtítulo explicativo", "Como fazer X da forma correta", "X vs Y: qual escolher".
+Título da publicação, com até 60 caracteres, específico e sem clickbait. Padrões usados no blog: "O que é X?", "X: subtítulo explicativo", "Como fazer X da forma correta", "X vs Y: qual escolher".
 
 ${SECTION_MARKERS.excerpt}
-Uma ou duas frases resumindo o post. É o excerpt do WordPress e também o primeiro parágrafo do conteúdo.
+Uma frase resumindo o post, entre 70 e 160 caracteres. É o excerpt do WordPress (a meta description) e também o primeiro parágrafo do conteúdo.
 
 ${SECTION_MARKERS.categories}
 De 2 a 5 categorias separadas por vírgula, escolhidas EXCLUSIVAMENTE desta lista: ${BLOG_CATEGORIES.join(', ')}

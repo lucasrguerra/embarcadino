@@ -14,6 +14,7 @@
 
 import { logger } from '../../shared/logger.js';
 import { WRITER_SYSTEM_PROMPT, SECTION_MARKERS, BLOG_CATEGORIES, buildWriterRequest } from './writer.prompt.js';
+import { auditDraft, buildSeoRevisionRequest } from './writer.seo.js';
 
 /** Redigir com pesquisa exige mais idas e vindas que responder uma pergunta. */
 const MAX_TOOL_ROUNDS = 25;
@@ -39,6 +40,20 @@ const WRITE_TIMEOUT_MS = 300_000;
 /** Teto de caracteres de um resultado de tool devolvido ao modelo. */
 const MAX_TOOL_RESULT_CHARS = 20_000;
 
+/**
+ * Quantas vezes o rascunho volta para o modelo por reprovar na auditoria de SEO.
+ * Duas passadas resolvem a grande maioria dos casos; a partir daí o modelo
+ * começa a encurtar o texto pra "ganhar" nos números, o que piora o post.
+ */
+const MAX_SEO_REVISIONS = 2;
+
+/**
+ * Piso de palavras aceito numa revisão, em relação ao rascunho anterior.
+ * Corrigir legibilidade é reescrever, não amputar: se a revisão veio com menos
+ * de 80% do texto, o modelo cortou conteúdo e ficamos com a versão anterior.
+ */
+const MIN_REVISION_WORD_RATIO = 0.8;
+
 export class WriterService {
   /** @type {import('../ai/ai.client.js').AiClient} */
   #client;
@@ -48,24 +63,28 @@ export class WriterService {
   #dispatcher;
   /** @type {string | undefined} */
   #model;
+  /** @type {string | undefined} */
+  #blogBaseUrl;
 
   /**
    * @param {import('../ai/ai.client.js').AiClient} client
    * @param {Array<Object>} tools
    * @param {Record<string, (args: Object) => Promise<unknown>>} dispatcher
-   * @param {{ model?: string }} [options]
+   * @param {{ model?: string, blogBaseUrl?: string }} [options]
    */
-  constructor(client, tools, dispatcher, { model } = {}) {
+  constructor(client, tools, dispatcher, { model, blogBaseUrl } = {}) {
     this.#client = client;
     this.#tools = tools;
     this.#dispatcher = dispatcher;
     this.#model = model;
+    this.#blogBaseUrl = blogBaseUrl;
   }
 
   /**
-   * Redige um rascunho de publicação.
+   * Redige um rascunho de publicação, já revisado contra os critérios de SEO e
+   * legibilidade do WordPress.
    * @param {{ theme: string, notes?: string, reference?: string }} briefing
-   * @returns {Promise<{ title: string, excerpt: string, categories: string[], content: string, words: number }>}
+   * @returns {Promise<{ title: string, excerpt: string, categories: string[], content: string, words: number, seo: Array<Object> }>}
    */
   async write(briefing) {
     const messages = [
@@ -74,7 +93,86 @@ export class WriterService {
     ];
 
     const raw = await this.#runToolLoop(messages);
-    return parseDraft(raw, briefing.theme);
+    const draft = parseDraft(raw, briefing.theme);
+
+    return this.#reviseForSeo(messages, draft, briefing.theme);
+  }
+
+  /**
+   * Devolve o rascunho ao modelo enquanto a auditoria apontar problema que ele
+   * consegue corrigir reescrevendo. O rascunho entregue nunca é descartado: se
+   * a revisão falhar ou vier mutilada, seguimos com a versão anterior e o
+   * relatório de SEO vai junto, para o Lucas decidir na revisão manual.
+   * @param {Array<Object>} messages
+   * @param {{ title: string, excerpt: string, content: string, words: number }} initial
+   * @param {string} theme
+   * @returns {Promise<Object>}
+   */
+  async #reviseForSeo(messages, initial, theme) {
+    let draft = initial;
+    const options = { blogBaseUrl: this.#blogBaseUrl };
+
+    for (let attempt = 1; attempt <= MAX_SEO_REVISIONS; attempt++) {
+      const issues = auditDraft(draft, options);
+      const blocking = issues.filter((issue) => issue.blocking);
+
+      if (blocking.length === 0) {
+        logger.info('WRITER', `Rascunho aprovado na auditoria de SEO (${issues.length} avisos).`);
+        return { ...draft, seo: issues };
+      }
+
+      logger.info(
+        'WRITER',
+        `Auditoria de SEO reprovou (tentativa ${attempt}/${MAX_SEO_REVISIONS}): ${blocking
+          .map((issue) => issue.code)
+          .join(', ')}`
+      );
+
+      messages.push({ role: 'user', content: buildSeoRevisionRequest(blocking, draft) });
+
+      let message;
+      try {
+        ({ message } = await this.#client.chat(messages, {
+          tools: this.#tools,
+          model: this.#model,
+          toolChoice: 'none',
+          timeout: WRITE_TIMEOUT_MS,
+        }));
+      } catch (err) {
+        logger.warn('WRITER', 'Falha na revisão de SEO, seguindo com o rascunho anterior', err);
+        break;
+      }
+      messages.push(message);
+
+      const content = message.content?.trim();
+      if (!content?.includes(SECTION_MARKERS.content)) {
+        logger.warn('WRITER', 'Revisão de SEO veio fora do envelope, seguindo com o rascunho anterior.');
+        break;
+      }
+
+      const revised = parseDraft(content, theme);
+      if (revised.words < draft.words * MIN_REVISION_WORD_RATIO) {
+        logger.warn(
+          'WRITER',
+          `Revisão de SEO cortou o texto (${draft.words} → ${revised.words} palavras), descartando.`
+        );
+        break;
+      }
+
+      // As categorias não são reavaliadas pela auditoria; se a revisão vier sem
+      // elas, as do rascunho original continuam valendo.
+      draft = { ...revised, categories: revised.categories.length ? revised.categories : draft.categories };
+    }
+
+    const remaining = auditDraft(draft, options);
+    if (remaining.some((issue) => issue.blocking)) {
+      logger.warn(
+        'WRITER',
+        `Rascunho entregue com pendências de SEO: ${remaining.map((issue) => issue.code).join(', ')}`
+      );
+    }
+
+    return { ...draft, seo: remaining };
   }
 
   /**
