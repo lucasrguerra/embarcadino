@@ -49,3 +49,7 @@ outgoing:
 engines:
   - name: bing
     disabled: true
+  - name: startpage
+    disabled: true
+  - name: brave
+    disabled: true

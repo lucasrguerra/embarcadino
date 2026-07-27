@@ -16,7 +16,7 @@ import { logger } from '../../shared/logger.js';
 import { WRITER_SYSTEM_PROMPT, SECTION_MARKERS, BLOG_CATEGORIES, buildWriterRequest } from './writer.prompt.js';
 
 /** Redigir com pesquisa exige mais idas e vindas que responder uma pergunta. */
-const MAX_TOOL_ROUNDS = 10;
+const MAX_TOOL_ROUNDS = 15;
 
 /** Teto de caracteres de um resultado de tool devolvido ao modelo. */
 const MAX_TOOL_RESULT_CHARS = 20_000;
@@ -74,6 +74,33 @@ export class WriterService {
       if (!message.tool_calls?.length) {
         const content = message.content?.trim();
         if (!content) throw new Error('O modelo devolveu um rascunho vazio.');
+
+        // Se o rascunho não contiver os marcadores obrigatórios, o modelo pode ter
+        // dado uma resposta intermediária/conversacional ou esquecido o formato.
+        // Solicitamos que ele gere o texto no formato esperado.
+        const hasMarkers = content.includes(SECTION_MARKERS.title) && content.includes(SECTION_MARKERS.content);
+        if (!hasMarkers) {
+          logger.info('WRITER', 'Modelo não enviou marcadores, solicitando rascunho no formato correto...');
+          messages.push({
+            role: 'user',
+            content: `Escreva o rascunho completo da publicação sobre o tema proposto, seguindo estritamente a estrutura e o envelope de marcadores combinados:
+${SECTION_MARKERS.title}
+[Título da publicação]
+
+${SECTION_MARKERS.excerpt}
+[Resumo de uma ou duas frases]
+
+${SECTION_MARKERS.categories}
+[Categorias]
+
+${SECTION_MARKERS.content}
+[Corpo do texto com os blocos Gutenberg do WordPress]
+
+Não adicione comentários, introduções ou explicações fora do envelope. Comece direto no marcador ${SECTION_MARKERS.title}.`
+          });
+          continue;
+        }
+
         return content;
       }
 
@@ -86,7 +113,7 @@ export class WriterService {
       }
     }
 
-    throw new Error('O modelo pesquisou demais e não chegou a escrever o rascunho.');
+    throw new Error('O modelo não gerou o rascunho no formato correto após várias tentativas ou pesquisou demais.');
   }
 
   /**
