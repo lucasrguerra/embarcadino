@@ -33,12 +33,15 @@ services:
         max-file: "3"
 
   searxng:
-    image: searxng/searxng:latest
+    build:
+      context: ./searxng
+      dockerfile: Dockerfile
     restart: unless-stopped
     # Sem `ports`: a instância só é alcançável de dentro da rede do Compose.
     # Publicar a porta transformaria isso num metabuscador aberto na internet.
-    volumes:
-      - ./searxng:/etc/searxng:ro
+    # Sem bind mounts: o settings.yml é embutido na imagem pelo Dockerfile.
+    # Bind mounts falham no Coolify porque o compose roda dentro de um helper
+    # container e os caminhos relativos são resolvidos contra o host, não o helper.
     environment:
       - SEARXNG_BASE_URL=http://searxng:8080/
       - SEARXNG_SECRET=${SEARXNG_SECRET:-embarcadino-searxng-secret-key}
