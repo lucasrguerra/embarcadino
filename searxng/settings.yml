@@ -1,0 +1,51 @@
+# Configuração do SearXNG usado pelo Embarcadino.
+#
+# Esta instância é interna: só o container do bot fala com ela, pela rede do
+# Compose. Por isso o formato JSON está habilitado (o cliente de pesquisa
+# depende dele) e o limiter está desligado — o limiter existe pra barrar
+# scraping vindo da internet, e aqui não há porta publicada.
+#
+# Se um dia esta instância for exposta publicamente, ligue o limiter de volta
+# e mantenha o JSON restrito, senão ela vira um proxy de busca aberto.
+
+use_default_settings: true
+
+general:
+  instance_name: 'Embarcadino Search'
+  # Sem página de doação e sem métricas — instância de serviço, não de uso humano.
+  donation_url: false
+  enable_metrics: false
+
+server:
+  # Trocado em tempo de execução pela variável SEARXNG_SECRET do .env.
+  secret_key: 'troque-esta-chave-no-env'
+  limiter: false
+  public_instance: false
+  image_proxy: false
+
+search:
+  # O 'json' é obrigatório: é o formato que o ResearchClient consome.
+  formats:
+    - html
+    - json
+  safe_search: 0
+  autocomplete: ''
+  default_lang: 'pt-BR'
+
+ui:
+  # Com hífen: o SearXNG valida contra LOCALE_NAMES, onde a chave é 'pt-BR'.
+  # 'pt_BR' (com underscore) é o nome do diretório de tradução e derruba o
+  # processo no boot com ValidationException.
+  default_locale: 'pt-BR'
+
+outgoing:
+  request_timeout: 10.0
+  max_request_timeout: 15.0
+  pool_connections: 100
+  pool_maxsize: 20
+
+# Motores desligados por serem barulhentos ou irrelevantes para o conteúdo
+# técnico que o bot pesquisa.
+engines:
+  - name: bing
+    disabled: true

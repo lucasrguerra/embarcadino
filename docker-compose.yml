@@ -1,0 +1,68 @@
+services:
+  embarcadino:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: embarcadino
+    restart: unless-stopped
+    depends_on:
+      searxng:
+        condition: service_healthy
+    environment:
+      - TELEGRAM_TOKEN_BASE64=${TELEGRAM_TOKEN_BASE64}
+      - ADMIN_CHAT_IDS=${ADMIN_CHAT_IDS}
+      - LLM_BASE_URL=${LLM_BASE_URL}
+      - LLM_API_KEY_BASE64=${LLM_API_KEY_BASE64}
+      - LLM_MODEL=${LLM_MODEL}
+      - LLM_WRITER_MODEL=${LLM_WRITER_MODEL:-}
+      - LLM_APP_URL=${LLM_APP_URL:-}
+      - LLM_APP_NAME=${LLM_APP_NAME:-}
+      - BLOG_BASE_URL=${BLOG_BASE_URL:-https://cienciaembarcada.com.br}
+      - WORDPRESS_USERNAME=${WORDPRESS_USERNAME:-}
+      - WORDPRESS_APP_PASSWORD_BASE64=${WORDPRESS_APP_PASSWORD_BASE64:-}
+      # Aponta para o SearXNG deste mesmo compose, pela rede interna.
+      - SEARXNG_BASE_URL=${SEARXNG_BASE_URL:-http://searxng:8080}
+    healthcheck:
+      test: ["CMD", "pgrep", "-x", "node"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  searxng:
+    image: searxng/searxng:latest
+    container_name: embarcadino-searxng
+    restart: unless-stopped
+    # Sem `ports`: a instância só é alcançável de dentro da rede do Compose.
+    # Publicar a porta transformaria isso num metabuscador aberto na internet.
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+    environment:
+      - SEARXNG_BASE_URL=http://searxng:8080/
+      - SEARXNG_SECRET=${SEARXNG_SECRET}
+      - UWSGI_WORKERS=2
+      - UWSGI_THREADS=4
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    healthcheck:
+      # O bot depende do formato JSON; testar a busca real (e não só a home)
+      # faz o healthcheck falhar se o settings.yml perder o formato json.
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/search?q=teste&format=json"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
