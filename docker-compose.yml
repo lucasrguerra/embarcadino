@@ -44,7 +44,7 @@ services:
       - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
     environment:
       - SEARXNG_BASE_URL=http://searxng:8080/
-      - SEARXNG_SECRET=${SEARXNG_SECRET}
+      - SEARXNG_SECRET=${SEARXNG_SECRET:-embarcadino-searxng-secret-key}
       - UWSGI_WORKERS=2
       - UWSGI_THREADS=4
     cap_drop:
@@ -54,9 +54,9 @@ services:
       - SETGID
       - SETUID
     healthcheck:
-      # O bot depende do formato JSON; testar a busca real (e não só a home)
-      # faz o healthcheck falhar se o settings.yml perder o formato json.
-      test: ["CMD", "wget", "-qO-", "http://localhost:8080/search?q=teste&format=json"]
+      # Usar o endpoint dedicado /healthz do SearXNG para verificar se a aplicação está online.
+      # Evita disparar buscas reais contra motores externos durante o healthcheck (que falhavam no AWS/Coolify).
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
       interval: 30s
       timeout: 10s
       start_period: 20s
