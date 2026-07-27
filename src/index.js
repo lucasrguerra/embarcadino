@@ -43,6 +43,8 @@ import { AI_TOOLS, createToolDispatcher } from './modules/ai/ai.tools.js';
 
 // Módulo Writer
 import { WriterService } from './modules/writer/writer.service.js';
+import { ImageryClient } from './modules/imagery/imagery.client.js';
+import { ImageryService } from './modules/imagery/imagery.service.js';
 import { WriterFormatter } from './modules/writer/writer.formatter.js';
 import { WriterHandlers } from './modules/writer/handlers/index.js';
 
@@ -93,8 +95,11 @@ const writerService = new WriterService(aiClient, AI_TOOLS, toolDispatcher, {
   // interno de externo.
   blogBaseUrl: config.blog.baseUrl,
 });
+const imageryClient = new ImageryClient(aiClient, { model: config.ai.imageModel });
+const imageryService = new ImageryService(imageryClient, blogService);
+
 const writerFormatter = new WriterFormatter();
-const writerHandlers = new WriterHandlers(writerService, writerFormatter, blogService);
+const writerHandlers = new WriterHandlers(writerService, writerFormatter, blogService, imageryService);
 
 // ── Bot ────────────────────────────────────────────────────────────────────
 

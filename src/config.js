@@ -47,6 +47,11 @@ class Config {
       model: process.env.LLM_MODEL || 'google/gemini-2.0-flash-001',
       /** Modelo usado na redação de posts — tarefa longa, vale um modelo mais forte. */
       writerModel: process.env.LLM_WRITER_MODEL || process.env.LLM_MODEL || 'google/gemini-2.0-flash-001',
+      /**
+       * Modelo de geração de imagem das ilustrações do post. Responde no mesmo
+       * endpoint de chat, com a modalidade de imagem pedida na saída.
+       */
+      imageModel: process.env.LLM_IMAGE_MODEL || 'google/gemini-3.1-flash-image',
       /** Enviados ao OpenRouter para atribuição do app no ranking deles. */
       appUrl: process.env.LLM_APP_URL || 'https://cienciaembarcada.com.br',
       appName: process.env.LLM_APP_NAME || 'Embarcadino',

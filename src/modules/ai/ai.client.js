@@ -57,13 +57,13 @@ export class AiClient {
   /**
    * Envia uma requisição de chat completion, com suporte a tool calling.
    * @param {Array<Object>} messages
-   * @param {{ tools?: Array<Object>, toolChoice?: string | Object, model?: string, temperature?: number, maxTokens?: number, timeout?: number }} [options]
+   * @param {{ tools?: Array<Object>, toolChoice?: string | Object, model?: string, temperature?: number, maxTokens?: number, timeout?: number, modalities?: string[] }} [options]
    * @returns {Promise<{ message: Object, finishReason: string }>}
    * @throws {LlmQuotaError} cota/rate limit que não adianta repetir agora
    * @throws {LlmAuthError} credencial inválida
    * @throws {LlmError} demais falhas do provedor
    */
-  async chat(messages, { tools = [], toolChoice, model, temperature, maxTokens, timeout } = {}) {
+  async chat(messages, { tools = [], toolChoice, model, temperature, maxTokens, timeout, modalities } = {}) {
     const body = {
       model: model ?? this.#model,
       messages,
@@ -73,6 +73,10 @@ export class AiClient {
       body.tools = tools;
       body.tool_choice = toolChoice ?? 'auto';
     }
+    // Modelos de imagem (Gemini Flash Image e afins) respondem no mesmo endpoint
+    // de chat; o que muda é pedir a modalidade de imagem na saída. Sem isso, o
+    // modelo devolve só a descrição textual do que desenharia.
+    if (modalities) body.modalities = modalities;
     if (temperature !== undefined) body.temperature = temperature;
     if (maxTokens !== undefined) body.max_tokens = maxTokens;
 

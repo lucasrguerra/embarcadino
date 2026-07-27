@@ -13,6 +13,7 @@ services:
       - LLM_API_KEY_BASE64=${LLM_API_KEY_BASE64}
       - LLM_MODEL=${LLM_MODEL}
       - LLM_WRITER_MODEL=${LLM_WRITER_MODEL:-}
+      - LLM_IMAGE_MODEL=${LLM_IMAGE_MODEL:-}
       - LLM_APP_URL=${LLM_APP_URL:-}
       - LLM_APP_NAME=${LLM_APP_NAME:-}
       - BLOG_BASE_URL=${BLOG_BASE_URL:-https://cienciaembarcada.com.br}

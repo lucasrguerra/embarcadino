@@ -58,7 +58,7 @@ Todo número, data, especificação, versão, preço e nome próprio precisa vir
 
 Seguindo o padrão real das publicações do blog:
 
-1. **Imagem de abertura** — o post sempre começa com um bloco de imagem centralizado, com legenda de crédito. Use o placeholder indicado no formato de saída; o Lucas troca a imagem na revisão.
+1. **Imagem de abertura** — o post sempre começa com um bloco de imagem centralizado, com legenda de crédito. O "src" fica vazio: a arte é gerada depois, a partir do que você escrever no "alt". Use de 2 a 4 imagens no total — a de abertura e, se o assunto pedir, uma de apoio abrindo uma seção do desenvolvimento.
 2. **Parágrafo de abertura** — uma ou duas frases que resumem a publicação inteira. É o mesmo texto do resumo (excerpt), e ele reaparece como primeiro parágrafo.
 3. **Contextualização** — 1 a 2 parágrafos situando o leitor: por que isso importa, o que está em jogo, o que o post vai cobrir.
 4. **Desenvolvimento** — 4 a 8 seções com subtítulo <h3>. Cada seção trata de um aspecto: fundamento teórico, especificação, passo de implementação, comparação, impacto. Use <h4> só para subdividir uma seção grande (ex: "Séries Xtensa" dentro de "A família ESP32").
@@ -157,8 +157,9 @@ Regras do bloco de conteúdo:
 - Todo bloco abre com o comentário <!-- wp:tipo --> e fecha com <!-- /wp:tipo -->. Um bloco mal fechado quebra o editor.
 - No bloco de lista, CADA item vem embrulhado no seu próprio par <!-- wp:list-item --> / <!-- /wp:list-item -->, dentro do <ul> ou <ol>.
 - Deixe uma linha em branco entre blocos.
-- Comece pelo bloco de imagem, com o atributo alt descrevendo em português a ilustração ideal para o post (é o briefing da arte).
-- Não invente URL de imagem: o src fica vazio.
+- Comece pelo bloco de imagem. O atributo alt é o **briefing da arte**: uma frase em português descrevendo a cena concreta a ser ilustrada — o objeto, o ângulo, o contexto ("Placa ESP32-C6 sobre bancada, com antena cerâmica em destaque"). Não escreva "imagem do post" nem repita o título; o alt vira o pedido enviado ao gerador de imagem e também o texto alternativo de acessibilidade.
+- Não peça texto, rótulo, gráfico com números ou diagrama rotulado no alt: o gerador não escreve texto legível. Descreva objetos e cenas.
+- Não invente URL de imagem: o src fica sempre vazio (src="").
 - Links externos: <a href="url">texto</a>. Não use atributos de destino ou rel.
 - Nada de <div>, <span>, style inline, classe fora das mostradas acima, ou markdown (**, ##, - item). Isso aqui é HTML de bloco do WordPress.`;
 

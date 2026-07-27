@@ -78,10 +78,10 @@ export class BlogService {
    * no blog é ignorado — melhor um rascunho com uma categoria a menos do que
    * uma requisição recusada inteira.
    *
-   * @param {{ title: string, excerpt: string, content: string, categories?: string[] }} draft
+   * @param {{ title: string, excerpt: string, content: string, categories?: string[], featuredMediaId?: number }} draft
    * @returns {Promise<{ id: number, link: string, editLink: string, status: string, categories: string[] }>}
    */
-  async createDraft({ title, excerpt, content, categories = [] }) {
+  async createDraft({ title, excerpt, content, categories = [], featuredMediaId }) {
     const known = await this.#client.listCategories();
     const idBySlug = new Map(known.map((category) => [category.slug, category.id]));
 
@@ -94,7 +94,23 @@ export class BlogService {
       categoryIds: matched.map((slug) => idBySlug.get(slug)),
     });
 
+    // A imagem destacada vem num segundo passo porque o anexo precisa existir
+    // antes. Falhar aqui deixa o rascunho sem capa, e nada mais: o texto e as
+    // imagens do corpo já estão salvos.
+    if (featuredMediaId) {
+      await this.#client.setFeaturedMedia(created.id, featuredMediaId).catch(() => undefined);
+    }
+
     return { ...created, categories: matched };
+  }
+
+  /**
+   * Sobe uma imagem para a biblioteca de mídia do blog.
+   * @param {{ data: Buffer, filename: string, mimeType: string, alt?: string }} file
+   * @returns {Promise<{ id: number, url: string }>}
+   */
+  async uploadImage(file) {
+    return this.#client.uploadMedia(file);
   }
 
   /**

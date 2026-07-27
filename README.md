@@ -55,7 +55,7 @@ O `/post` aceita um briefing com até três partes separadas por `|`:
 
 A parte que for URL vira a referência obrigatória (o bot lê a página antes de escrever); o resto vira observação.
 
-Com as credenciais do WordPress configuradas, o bot **cria o rascunho direto no blog** — com título, resumo e categorias preenchidos — e responde com o link do editor. Sem elas, ele entrega o mesmo conteúdo como arquivo `.html` para colar à mão.
+Com as credenciais do WordPress configuradas, o bot **cria o rascunho direto no blog** — com título, resumo, categorias e as ilustrações já geradas e subidas para a biblioteca de mídia (a primeira vira a imagem destacada) — e responde com o link do editor. Sem elas, ele entrega o mesmo conteúdo como arquivo `.html` para colar à mão.
 
 > O bot **nunca publica**. O status é fixo em `draft` no [blog.client.js](src/modules/blog/blog.client.js) e não há caminho no código que publique — revisar e publicar continua sendo decisão humana.
 
@@ -101,6 +101,7 @@ src/
 └── modules/
     ├── ai/                     # Assistente: client, prompt, tools, service
     ├── blog/                   # API REST do WordPress: leitura e criação de rascunho
+    ├── imagery/                # Geração das ilustrações do post e upload da mídia
     ├── knowledge/              # Base de conhecimento dos projetos
     ├── research/               # Busca na web e leitura de páginas
     └── writer/                 # Redação de rascunhos de publicação
@@ -147,6 +148,7 @@ echo -n 'seu_token_aqui' | base64 -w0
 | `WORDPRESS_APP_PASSWORD_BASE64` | não | Senha de aplicação, em base64. Vai junto com a de cima |
 | `LLM_MODEL` | não | Modelo do assistente (precisa suportar tool calling) |
 | `LLM_WRITER_MODEL` | não | Modelo da redação. Padrão: o mesmo do assistente |
+| `LLM_IMAGE_MODEL` | não | Modelo das ilustrações do post. Padrão: `google/gemini-3.1-flash-image` |
 | `LLM_BASE_URL` | não | Padrão: `https://openrouter.ai/api/v1` |
 | `BLOG_BASE_URL` | não | Padrão: `https://cienciaembarcada.com.br` |
 | `SEARXNG_BASE_URL` | não | Padrão no compose: `http://searxng:8080`. Fora dele, a busca usa DuckDuckGo |

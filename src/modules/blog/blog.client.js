@@ -18,6 +18,9 @@
 
 const TIMEOUT_MS = 30_000;
 
+/** Subir uma imagem gerada (algumas centenas de KB) leva mais que uma leitura. */
+const UPLOAD_TIMEOUT_MS = 120_000;
+
 export class BlogClient {
   /** @type {string} */
   #baseUrl;
@@ -128,6 +131,55 @@ export class BlogClient {
   }
 
   /**
+   * Sobe um arquivo para a biblioteca de mídia e devolve a URL pública.
+   *
+   * O endpoint de mídia não aceita JSON: o corpo é o binário puro, e o nome do
+   * arquivo vai no `Content-Disposition`. O `alt_text` só pode ser definido
+   * depois, num segundo POST sobre o anexo já criado — é assim que a API do
+   * WordPress funciona, não é redundância.
+   *
+   * @param {{ data: Buffer, filename: string, mimeType: string, alt?: string, caption?: string }} file
+   * @returns {Promise<{ id: number, url: string }>}
+   */
+  async uploadMedia({ data, filename, mimeType, alt, caption }) {
+    if (!this.canWrite) {
+      throw new Error('Credenciais do WordPress não configuradas.');
+    }
+
+    const created = await this.#request('/wp-json/wp/v2/media', {
+      method: 'POST',
+      authenticated: true,
+      raw: { data, mimeType, filename },
+    });
+
+    if (alt || caption) {
+      // Falhar aqui custaria a imagem inteira por causa de um atributo; o alt é
+      // importante pro SEO, mas não a ponto de descartar o upload que deu certo.
+      await this.#request(`/wp-json/wp/v2/media/${created.id}`, {
+        method: 'POST',
+        authenticated: true,
+        body: { ...(alt ? { alt_text: alt } : {}), ...(caption ? { caption } : {}) },
+      }).catch(() => undefined);
+    }
+
+    return { id: created.id, url: created.source_url ?? '' };
+  }
+
+  /**
+   * Define a imagem destacada de uma publicação.
+   * @param {number} postId
+   * @param {number} mediaId
+   * @returns {Promise<void>}
+   */
+  async setFeaturedMedia(postId, mediaId) {
+    await this.#request(`/wp-json/wp/v2/posts/${postId}`, {
+      method: 'POST',
+      authenticated: true,
+      body: { featured_media: mediaId },
+    });
+  }
+
+  /**
    * Confere se as credenciais são válidas, sem escrever nada.
    * @returns {Promise<{ name: string, id: number }>} Usuário autenticado
    */
@@ -141,22 +193,30 @@ export class BlogClient {
 
   /**
    * @param {string} path
-   * @param {{ method?: string, body?: Object, authenticated?: boolean }} [options]
+   * @param {{ method?: string, body?: Object, authenticated?: boolean, raw?: { data: Buffer, mimeType: string, filename: string } }} [options]
    * @returns {Promise<any>}
    */
-  async #request(path, { method = 'GET', body, authenticated = false } = {}) {
+  async #request(path, { method = 'GET', body, authenticated = false, raw } = {}) {
     const response = await fetch(`${this.#baseUrl}${path}`, {
       method,
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      // Upload de imagem é lento numa hospedagem compartilhada; o timeout de
+      // leitura não serve aqui.
+      signal: AbortSignal.timeout(raw ? UPLOAD_TIMEOUT_MS : TIMEOUT_MS),
       headers: {
         Accept: 'application/json',
         ...(body ? { 'Content-Type': 'application/json' } : {}),
+        ...(raw
+          ? {
+              'Content-Type': raw.mimeType,
+              'Content-Disposition': `attachment; filename="${raw.filename}"`,
+            }
+          : {}),
         // A credencial só acompanha as chamadas que precisam dela — busca e
         // leitura são anônimas, e mandar Basic Auth em toda requisição seria
         // exposição desnecessária do segredo.
         ...(authenticated ? { Authorization: this.#authHeader } : {}),
       },
-      ...(body ? { body: JSON.stringify(body) } : {}),
+      ...(raw ? { body: raw.data } : body ? { body: JSON.stringify(body) } : {}),
     });
 
     if (!response.ok) {
