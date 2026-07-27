@@ -29,6 +29,13 @@ const FORCE_TEXT_ROUNDS = 2;
 /** Número máximo de tentativas de pedir o formato de marcadores ao modelo. */
 const MAX_MARKER_RETRIES = 2;
 
+/**
+ * Timeout para o round de redação (sem tools). Gerar 1000-3000 palavras de
+ * HTML Gutenberg com todo o contexto de pesquisa leva bem mais que os 180s
+ * padrão da API.
+ */
+const WRITE_TIMEOUT_MS = 300_000;
+
 /** Teto de caracteres de um resultado de tool devolvido ao modelo. */
 const MAX_TOOL_RESULT_CHARS = 20_000;
 
@@ -99,6 +106,7 @@ export class WriterService {
       const { message } = await this.#client.chat(messages, {
         tools: sendTools ? this.#tools : [],
         model: this.#model,
+        ...(!sendTools ? { timeout: WRITE_TIMEOUT_MS } : {}),
       });
       messages.push(message);
 

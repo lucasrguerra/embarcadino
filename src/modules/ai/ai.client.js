@@ -34,10 +34,10 @@ export class AiClient {
   /**
    * Envia uma requisição de chat completion, com suporte a tool calling.
    * @param {Array<Object>} messages
-   * @param {{ tools?: Array<Object>, model?: string, temperature?: number, maxTokens?: number }} [options]
+   * @param {{ tools?: Array<Object>, model?: string, temperature?: number, maxTokens?: number, timeout?: number }} [options]
    * @returns {Promise<{ message: Object, finishReason: string }>}
    */
-  async chat(messages, { tools = [], model, temperature, maxTokens } = {}) {
+  async chat(messages, { tools = [], model, temperature, maxTokens, timeout } = {}) {
     const body = {
       model: model ?? this.#model,
       messages,
@@ -52,7 +52,7 @@ export class AiClient {
 
     const response = await fetch(`${this.#baseUrl}/chat/completions`, {
       method: 'POST',
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeout ?? TIMEOUT_MS),
       headers: {
         Authorization: `Bearer ${this.#apiKey}`,
         'Content-Type': 'application/json',
