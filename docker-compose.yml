@@ -38,7 +38,7 @@ services:
     # Sem `ports`: a instância só é alcançável de dentro da rede do Compose.
     # Publicar a porta transformaria isso num metabuscador aberto na internet.
     volumes:
-      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+      - ./searxng:/etc/searxng:ro
     environment:
       - SEARXNG_BASE_URL=http://searxng:8080/
       - SEARXNG_SECRET=${SEARXNG_SECRET:-embarcadino-searxng-secret-key}
