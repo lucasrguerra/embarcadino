@@ -16,7 +16,18 @@ import { logger } from '../../shared/logger.js';
 import { WRITER_SYSTEM_PROMPT, SECTION_MARKERS, BLOG_CATEGORIES, buildWriterRequest } from './writer.prompt.js';
 
 /** Redigir com pesquisa exige mais idas e vindas que responder uma pergunta. */
-const MAX_TOOL_ROUNDS = 15;
+const MAX_TOOL_ROUNDS = 25;
+
+/**
+ * Quantos rounds antes do fim o modelo recebe um aviso para parar de pesquisar
+ * e começar a redigir. Nos últimos FORCE_TEXT_ROUNDS, as tools são omitidas
+ * da chamada, forçando o modelo a produzir texto.
+ */
+const NUDGE_ROUNDS_BEFORE_END = 3;
+const FORCE_TEXT_ROUNDS = 2;
+
+/** Número máximo de tentativas de pedir o formato de marcadores ao modelo. */
+const MAX_MARKER_RETRIES = 2;
 
 /** Teto de caracteres de um resultado de tool devolvido ao modelo. */
 const MAX_TOOL_RESULT_CHARS = 20_000;
@@ -64,9 +75,29 @@ export class WriterService {
    * @returns {Promise<string>}
    */
   async #runToolLoop(messages) {
+    let markerRetries = 0;
+
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+      const remainingRounds = MAX_TOOL_ROUNDS - round;
+
+      // Nos últimos rounds, omitir as tools força o modelo a produzir texto.
+      const sendTools = remainingRounds > FORCE_TEXT_ROUNDS;
+
+      // Quando faltam poucos rounds e ainda não recebemos o rascunho,
+      // injetamos um aviso para o modelo encerrar a pesquisa.
+      if (remainingRounds === NUDGE_ROUNDS_BEFORE_END && sendTools) {
+        logger.info('WRITER', 'Injetando nudge para o modelo parar de pesquisar e redigir.');
+        messages.push({
+          role: 'user',
+          content:
+            'Você já pesquisou o suficiente. Pare de chamar ferramentas e escreva o rascunho ' +
+            'completo AGORA, no envelope de marcadores combinado (===TITULO===, ===RESUMO===, ' +
+            '===CATEGORIAS===, ===CONTEUDO===). Use as informações que já coletou.',
+        });
+      }
+
       const { message } = await this.#client.chat(messages, {
-        tools: this.#tools,
+        tools: sendTools ? this.#tools : [],
         model: this.#model,
       });
       messages.push(message);
@@ -80,7 +111,12 @@ export class WriterService {
         // Solicitamos que ele gere o texto no formato esperado.
         const hasMarkers = content.includes(SECTION_MARKERS.title) && content.includes(SECTION_MARKERS.content);
         if (!hasMarkers) {
-          logger.info('WRITER', 'Modelo não enviou marcadores, solicitando rascunho no formato correto...');
+          markerRetries++;
+          if (markerRetries > MAX_MARKER_RETRIES) {
+            logger.warn('WRITER', `Modelo não enviou marcadores após ${markerRetries} tentativas, aceitando texto cru.`);
+            return content;
+          }
+          logger.info('WRITER', `Modelo não enviou marcadores (tentativa ${markerRetries}/${MAX_MARKER_RETRIES}), solicitando formato correto...`);
           messages.push({
             role: 'user',
             content: `Escreva o rascunho completo da publicação sobre o tema proposto, seguindo estritamente a estrutura e o envelope de marcadores combinados:
