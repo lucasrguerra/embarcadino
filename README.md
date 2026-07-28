@@ -55,7 +55,7 @@ O `/post` aceita um briefing com até três partes separadas por `|`:
 
 A parte que for URL vira a referência obrigatória (o bot lê a página antes de escrever); o resto vira observação.
 
-Com as credenciais do WordPress configuradas, o bot **cria o rascunho direto no blog** — com título, resumo, categorias e as ilustrações já geradas e subidas para a biblioteca de mídia (a primeira vira a imagem destacada) — e responde com o link do editor. Sem elas, ele entrega o mesmo conteúdo como arquivo `.html` para colar à mão.
+Com as credenciais do WordPress configuradas, o bot **cria o rascunho direto no blog** — com título, resumo e categorias preenchidos — e responde com o link do editor. Sem elas, ele entrega o mesmo conteúdo como arquivo `.html` para colar à mão.
 
 > O bot **nunca publica**. O status é fixo em `draft` no [blog.client.js](src/modules/blog/blog.client.js) e não há caminho no código que publique — revisar e publicar continua sendo decisão humana.
 
@@ -68,7 +68,7 @@ Todas somente leitura — o modelo consulta, quem age é o usuário.
 | Tool | Para quê |
 |------|----------|
 | `web_search` | Busca na internet (SearXNG do compose, com fallback pro DuckDuckGo) |
-| `read_page` | Lê uma URL e extrai o texto legível |
+| `read_page` | Lê uma URL e extrai o texto legível. Quando falha, devolve o motivo e sugere páginas reais sobre o mesmo assunto |
 | `blog_search` | Busca publicações do blog pela API REST do WordPress |
 | `blog_latest` | Publicações mais recentes |
 | `blog_get_post` | Conteúdo completo de uma publicação |
@@ -101,7 +101,6 @@ src/
 └── modules/
     ├── ai/                     # Assistente: client, prompt, tools, service
     ├── blog/                   # API REST do WordPress: leitura e criação de rascunho
-    ├── imagery/                # Geração das ilustrações do post e upload da mídia
     ├── knowledge/              # Base de conhecimento dos projetos
     ├── research/               # Busca na web e leitura de páginas
     └── writer/                 # Redação de rascunhos de publicação
@@ -121,6 +120,8 @@ Dois documentos guiam o conteúdo:
 - **`DESIGN.md`** — como as mensagens do bot são escritas e formatadas.
 - **`src/modules/writer/writer.prompt.js`** — como uma publicação do blog é escrita. As regras foram extraídas do export completo do WordPress do Ciência Embarcada (32 publicações), não inventadas.
 - **`src/modules/writer/writer.seo.js`** — os critérios de SEO e legibilidade que o rascunho precisa cumprir (tamanho mínimo, título, meta description, transições, Flesch, referências, subtítulos). O prompt orienta; este módulo mede e devolve o rascunho ao modelo enquanto houver reprovação. O que sobra vai como aviso na mensagem do Telegram.
+
+Na redação de posts, o [`SourceRegistry`](src/modules/research/source.registry.js) guarda o que a busca devolveu e o que foi efetivamente aberto com `read_page`. A auditoria recusa qualquer referência fora dessa lista — sem isso o modelo cita URLs plausíveis que nunca leu, e o leitor cai num 404.
 
 ---
 
@@ -148,7 +149,6 @@ echo -n 'seu_token_aqui' | base64 -w0
 | `WORDPRESS_APP_PASSWORD_BASE64` | não | Senha de aplicação, em base64. Vai junto com a de cima |
 | `LLM_MODEL` | não | Modelo do assistente (precisa suportar tool calling) |
 | `LLM_WRITER_MODEL` | não | Modelo da redação. Padrão: o mesmo do assistente |
-| `LLM_IMAGE_MODEL` | não | Modelo das ilustrações do post. Padrão: `gemini-3.1-flash-image` |
 | `LLM_BASE_URL` | não | Padrão: `https://openrouter.ai/api/v1` |
 | `BLOG_BASE_URL` | não | Padrão: `https://cienciaembarcada.com.br` |
 | `SEARXNG_BASE_URL` | não | Padrão no compose: `http://searxng:8080`. Fora dele, a busca usa DuckDuckGo |

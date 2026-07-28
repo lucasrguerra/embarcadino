@@ -82,10 +82,10 @@ const TRANSITION_PATTERNS = [...TRANSITION_WORDS]
  * Audita o rascunho e devolve os problemas encontrados, do mais grave ao menos.
  * Lista vazia significa rascunho aprovado.
  * @param {{ title: string, excerpt: string, content: string }} draft
- * @param {{ blogBaseUrl?: string }} [options]
+ * @param {{ blogBaseUrl?: string, sources?: import('../research/source.registry.js').SourceRegistry }} [options]
  * @returns {Array<{ code: string, blocking: boolean, message: string, fix: string }>}
  */
-export function auditDraft({ title, excerpt, content }, { blogBaseUrl } = {}) {
+export function auditDraft({ title, excerpt, content }, { blogBaseUrl, sources } = {}) {
   const issues = [];
   const text = stripBlocks(content);
   const sentences = splitSentences(text);
@@ -212,18 +212,42 @@ export function auditDraft({ title, excerpt, content }, { blogBaseUrl } = {}) {
     });
   }
 
-  // Fonte externa é outra história: o redator é obrigado a pesquisar antes de
-  // escrever, então a ausência de referência significa texto escrito de cabeça.
-  const uniqueExternal = new Set(external.map(hostOf)).size;
+  // Referência que o modelo não abriu é o defeito mais grave que este módulo
+  // detecta: o leitor clica e cai num 404, e o post perde a credibilidade
+  // técnica inteira. Só entra na contagem de fontes o que passou pelo read_page.
+  const verified = sources ? external.filter((href) => sources.wasRead(href)) : external;
+
+  if (sources) {
+    const unverified = external.filter((href) => !sources.wasRead(href));
+    if (unverified.length > 0) {
+      const readList = sources.readUrls();
+
+      issues.push({
+        code: 'unverified-links',
+        blocking: true,
+        message: `${unverified.length} link(s) apontam para páginas que você não leu: ${unverified
+          .slice(0, 5)
+          .join(', ')}.`,
+        fix:
+          'Remova esses links. Referência é só página aberta com read_page nesta redação' +
+          (readList.length > 0
+            ? `; as que você leu foram:\n${readList.map((url) => `   - ${url}`).join('\n')}`
+            : ', e você não leu nenhuma — pesquise com web_search e leia as fontes antes de citar') +
+          '. Se precisar de mais fontes, busque e leia agora; nunca escreva uma URL de memória.',
+      });
+    }
+  }
+
+  const uniqueExternal = new Set(verified.map(hostOf)).size;
   if (uniqueExternal < LIMITS.minExternalLinks) {
     issues.push({
       code: 'external-links',
       blocking: true,
-      message: `O texto cita ${uniqueExternal} fonte(s) externa(s) distinta(s) (mínimo: ${LIMITS.minExternalLinks}).`,
+      message: `O texto cita ${uniqueExternal} fonte(s) externa(s) distinta(s) e verificada(s) (mínimo: ${LIMITS.minExternalLinks}).`,
       fix:
-        `Leia mais fontes com read_page e cite pelo menos ${LIMITS.minExternalLinks} referências externas distintas ` +
-        'na seção Referências — documentação oficial, datasheet do fabricante, aviso de segurança ou veículo técnico. ' +
-        'Cada uma precisa ter sido lida de fato; não invente URL.',
+        `Pesquise com web_search, abra as páginas com read_page e cite pelo menos ${LIMITS.minExternalLinks} ` +
+        'referências externas de domínios diferentes na seção Referências — documentação oficial, datasheet do ' +
+        'fabricante, aviso de segurança ou veículo técnico. Só conta o que você abriu de fato nesta redação.',
     });
   }
 
@@ -240,22 +264,63 @@ export function auditDraft({ title, excerpt, content }, { blogBaseUrl } = {}) {
 }
 
 /**
+ * Problemas de substância: o texto está curto ou as fontes não se sustentam.
+ * Corrigi-los significa ACRESCENTAR — pesquisar, aprofundar, citar.
+ */
+const SUBSTANCE_CODES = new Set(['content-short', 'external-links', 'unverified-links', 'internal-links']);
+
+/**
+ * Escolhe o que cobrar do modelo nesta rodada.
+ *
+ * Pedir tudo de uma vez não funciona, e o motivo é simples: "amplie para 800
+ * palavras" e "encurte as frases, suba o Flesch" na mesma mensagem são ordens
+ * contraditórias. Na prática o modelo obedecia à segunda, o texto encolhia, a
+ * revisão era descartada por cortar conteúdo e o ciclo terminava sem corrigir
+ * nada. Substância primeiro, forma depois — nessa ordem os dois convergem.
+ *
+ * @param {Array<{ code: string, blocking: boolean }>} issues
+ * @returns {{ stage: 'substance' | 'form', issues: Array<Object> }}
+ */
+export function nextRevisionBatch(issues) {
+  const substance = issues.filter((issue) => SUBSTANCE_CODES.has(issue.code));
+  const blockingSubstance = substance.filter((issue) => issue.blocking);
+
+  // Os avisos de substância (link interno, por exemplo) pegam carona na rodada
+  // de conteúdo, mas nunca provocam uma rodada sozinhos.
+  if (blockingSubstance.length > 0) return { stage: 'substance', issues: substance };
+
+  return { stage: 'form', issues: issues.filter((issue) => !SUBSTANCE_CODES.has(issue.code)) };
+}
+
+/**
  * Monta o pedido de revisão enviado ao modelo com os problemas encontrados.
  * @param {Array<{ message: string, fix: string }>} issues
  * @param {{ title: string, excerpt: string }} draft
+ * @param {'substance' | 'form'} [stage]
  * @returns {string}
  */
-export function buildSeoRevisionRequest(issues, { title, excerpt }) {
+export function buildSeoRevisionRequest(issues, { title, excerpt }, stage = 'form') {
   const list = issues.map(({ message, fix }, index) => `${index + 1}. ${message}\n   → ${fix}`).join('\n');
 
+  const closing =
+    stage === 'substance'
+      ? 'Corrija SOMENTE os pontos acima. Nesta rodada não mexa em legibilidade, tamanho de frase nem ' +
+        'palavras de transição — isso vem depois, e mexer agora faz você encurtar o texto justamente ' +
+        'quando ele precisa crescer. Mantenha tudo o que já está escrito e acrescente por cima.'
+      : 'Corrija os pontos acima sem tocar no conteúdo: nenhuma seção a menos, nenhum dado a menos, ' +
+        'nenhuma referência a menos, e o mesmo número de palavras ou mais. Onde uma frase for longa ' +
+        'demais, divida em duas em vez de apagar a informação.';
+
   return [
-    'O rascunho está bom de conteúdo, mas reprovou na análise de SEO e legibilidade do WordPress. Problemas medidos:',
+    stage === 'substance'
+      ? 'O rascunho ainda não tem substância suficiente para publicar. Problemas medidos:'
+      : 'O rascunho está bom de conteúdo, mas reprovou na análise de SEO e legibilidade do WordPress. Problemas medidos:',
     '',
     list,
     '',
     `Para referência, o título atual tem ${String(title ?? '').trim().length} caracteres e o resumo, ${String(excerpt ?? '').trim().length}.`,
     '',
-    'Reescreva a publicação inteira corrigindo TODOS os pontos acima. Não corte informação, não reduza o número de palavras, não remova seções nem referências: a correção é de forma, não de conteúdo. Devolva o rascunho completo no mesmo envelope de marcadores, sem comentar as mudanças.',
+    `${closing} Devolva o rascunho completo no mesmo envelope de marcadores, sem comentar as mudanças.`,
   ].join('\n');
 }
 

@@ -49,7 +49,12 @@ search:
     - json
   safe_search: 0
   autocomplete: ''
-  default_lang: 'pt-BR'
+  # 'all' de propósito. Com 'pt-BR' a busca só devolvia página em português, e a
+  # fonte primária do que o bot pesquisa — datasheet, ESP-IDF, RFC, aviso de
+  # fabricante — é em inglês. Medido na mesma query: 10 resultados com 'pt-BR',
+  # 28 com 'all', e só com 'all' aparece a documentação oficial do Espressif.
+  # O cliente também manda language=all em cada requisição.
+  default_lang: 'all'
 
 ui:
   # Com hífen: o SearXNG valida contra LOCALE_NAMES, onde a chave é 'pt-BR'.
@@ -63,12 +68,20 @@ outgoing:
   pool_connections: 100
   pool_maxsize: 20
 
-# Motores desligados por serem barulhentos ou irrelevantes para o conteúdo
-# técnico que o bot pesquisa. Aqui `disabled` basta: eles carregam sem erro,
-# só não devem entrar no resultado.
+# O bing voltou: com só google+duckduckgo respondendo, a cobertura ficava
+# estreita demais para busca técnica, e resultado escasso é o que leva o modelo
+# a inventar URL. Medido nesta instância, para "esp32 task watchdog timer
+# configuration", o bing devolve 10 resultados com a documentação oficial do
+# Espressif entre eles.
+#
+# O brave foi testado e reprovou EM PRODUÇÃO: da máquina de desenvolvimento ele
+# respondia bem, mas do IP do servidor devolve 429 e o SearXNG o suspende por
+# 180s a cada busca ("SearxEngineTooManyRequestsException"). Ele não contribui
+# com resultado nenhum lá e só enche o log de stack trace.
+#
+# O startpage está desligado porque responde com erro nesta instância (o
+# endpoint JSON devolve uma lista no lugar do objeto de resultados).
 engines:
-  - name: bing
-    disabled: true
   - name: startpage
     disabled: true
   - name: brave

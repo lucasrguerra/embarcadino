@@ -14,10 +14,9 @@ export class WriterFormatter {
    * Ficha do rascunho pronto.
    * @param {{ title: string, excerpt: string, categories: string[], words: number, seo?: Array<{ message: string }> }} draft
    * @param {{ editLink: string } | null} [published] - Rascunho criado no WordPress, se houve
-   * @param {{ images?: Array<Object>, failed?: number }} [illustration] - Resultado da ilustração
    * @returns {string} HTML
    */
-  formatSummary({ title, excerpt, categories, words, seo = [] }, published = null, illustration = {}) {
+  formatSummary({ title, excerpt, categories, words, seo = [] }, published = null) {
     const lines = [
       `${WRITER_EMOJI} <b>${escapeHtml(title)}</b>`,
       `<i>└ ${escapeHtml(excerpt)}</i>`,
@@ -27,14 +26,6 @@ export class WriterFormatter {
 
     if (categories.length > 0) {
       lines.push(`<i>└ <code>${escapeHtml(categories.join(' · '))}</code></i>`);
-    }
-
-    const generated = illustration.images?.length ?? 0;
-    const failed = illustration.failed ?? 0;
-    if (generated > 0 || failed > 0) {
-      const parts = [`${pluralize(generated, 'imagem gerada', 'imagens geradas')}`];
-      if (failed > 0) parts.push(`${failed} sem sucesso — bloco ficou vazio`);
-      lines.push(`<i>└ 🖼 ${escapeHtml(parts.join(', '))}</i>`);
     }
 
     // O que a auditoria não conseguiu corrigir sozinha vira aviso: melhor o

@@ -20,6 +20,7 @@ import { ConversationStore } from './shared/conversation.store.js';
 // Módulo Research
 import { ResearchClient } from './modules/research/research.client.js';
 import { ResearchService } from './modules/research/research.service.js';
+import { SourceRegistry } from './modules/research/source.registry.js';
 import { ResearchFormatter } from './modules/research/research.formatter.js';
 import { ResearchHandlers } from './modules/research/handlers/index.js';
 
@@ -43,8 +44,6 @@ import { AI_TOOLS, createToolDispatcher } from './modules/ai/ai.tools.js';
 
 // Módulo Writer
 import { WriterService } from './modules/writer/writer.service.js';
-import { ImageryClient } from './modules/imagery/imagery.client.js';
-import { ImageryService } from './modules/imagery/imagery.service.js';
 import { WriterFormatter } from './modules/writer/writer.formatter.js';
 import { WriterHandlers } from './modules/writer/handlers/index.js';
 
@@ -84,22 +83,31 @@ const knowledgeHandlers = new KnowledgeHandlers(knowledgeService, knowledgeForma
 
 const aiClient = new AiClient(config.ai);
 const toolDispatcher = createToolDispatcher({ researchService, blogService, knowledgeService });
+
+// O redator usa um dispatcher próprio, com registro de fontes: é ele que
+// permite recusar referência que o modelo não abriu. O assistente do chat
+// segue com o dispatcher simples — lá não há auditoria de referências.
+const writerSources = new SourceRegistry();
+const writerDispatcher = createToolDispatcher({
+  researchService,
+  blogService,
+  knowledgeService,
+  sources: writerSources,
+});
 const conversations = new ConversationStore(config.conversation);
 const aiService = new AiService(aiClient, AI_TOOLS, toolDispatcher, conversations);
 const aiFormatter = new AiFormatter();
 const aiHandlers = new AiHandlers(aiService, aiFormatter);
 
-const writerService = new WriterService(aiClient, AI_TOOLS, toolDispatcher, {
+const writerService = new WriterService(aiClient, AI_TOOLS, writerDispatcher, {
   model: config.ai.writerModel,
+  sources: writerSources,
   // A auditoria de SEO precisa saber qual host é "interno" pra distinguir link
   // interno de externo.
   blogBaseUrl: config.blog.baseUrl,
 });
-const imageryClient = new ImageryClient(aiClient, { model: config.ai.imageModel });
-const imageryService = new ImageryService(imageryClient, blogService);
-
 const writerFormatter = new WriterFormatter();
-const writerHandlers = new WriterHandlers(writerService, writerFormatter, blogService, imageryService);
+const writerHandlers = new WriterHandlers(writerService, writerFormatter, blogService);
 
 // ── Bot ────────────────────────────────────────────────────────────────────
 
@@ -130,28 +138,49 @@ if (blogService.canWrite) {
 }
 
 // ── Inicialização com retry (trata race condition de rede no Docker) ────────
+//
+// O retry envolve o getMe, não o launch: `launch()` só resolve quando o bot
+// PARA de rodar (ele aguarda o polling inteiro), então repetir a chamada dele
+// num laço nunca reportaria sucesso e ainda arriscaria dois pollings ao mesmo
+// tempo — que é 409 na cara do Telegram. O getMe é a etapa que falhava com
+// ETIMEDOUT no boot do container, e é ela que vale repetir. Depois de passar,
+// o botInfo já fica em cache e o launch não repete a requisição.
 
-async function launchWithRetry(maxRetries = 10, delayMs = 5000) {
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+/**
+ * @param {number} maxAttempts
+ * @param {number} delayMs
+ * @returns {Promise<void>}
+ */
+async function connectWithRetry(maxAttempts = 10, delayMs = 5000) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      await bot.launch();
-      logger.info('LAUNCH', '✅ Embarcadino iniciado com sucesso.');
+      const me = await bot.telegram.getMe();
+      logger.info('LAUNCH', `Conectado ao Telegram como @${me.username}.`);
       return;
     } catch (err) {
-      logger.error('LAUNCH', `Tentativa ${attempt}/${maxRetries} falhou`, err);
+      logger.error('LAUNCH', `Tentativa ${attempt}/${maxAttempts} de falar com o Telegram falhou`, err);
 
-      if (attempt < maxRetries) {
-        logger.info('LAUNCH', `Aguardando ${delayMs / 1000}s...`);
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
-      } else {
+      if (attempt === maxAttempts) {
         logger.error('LAUNCH', 'Número máximo de tentativas atingido. Encerrando.');
         process.exit(1);
       }
+
+      logger.info('LAUNCH', `Aguardando ${delayMs / 1000}s...`);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
 }
 
-launchWithRetry();
+await connectWithRetry();
+
+// O callback dispara quando o polling começa de fato; a Promise do launch fica
+// pendente até o bot parar, então não dá pra usar o `await` dela como sinal.
+bot
+  .launch(() => logger.info('LAUNCH', '✅ Embarcadino iniciado com sucesso.'))
+  .catch((err) => {
+    logger.error('LAUNCH', 'O polling do Telegram parou por erro. Encerrando para o Docker reiniciar.', err);
+    process.exit(1);
+  });
 
 // ── Graceful shutdown ──────────────────────────────────────────────────────
 

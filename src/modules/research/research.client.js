@@ -16,10 +16,19 @@
 import * as cheerio from 'cheerio';
 import { normalizeWhitespace } from '../../shared/text.utils.js';
 import { logger } from '../../shared/logger.js';
+import { sourceKey } from './source.registry.js';
 
 /** UA de navegador — vários sites devolvem 403 pro UA padrão do Node. */
 const USER_AGENT =
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36';
+
+const DEFAULT_HEADERS = {
+  'User-Agent': USER_AGENT,
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+  'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+  'Cache-Control': 'no-cache',
+  'Pragma': 'no-cache',
+};
 
 /** Elementos que nunca contêm o conteúdo principal de um artigo. */
 const NOISE_SELECTORS = [
@@ -72,7 +81,10 @@ export class ResearchClient {
    */
   async search(query, limit = 8) {
     const results = await this.#searchWithFallback(query);
-    return results.filter((result) => result.url).slice(0, limit);
+
+    // Só endereço http(s) navegável: alguns motores devolvem magnet:, ftp: ou
+    // caminho relativo, e o modelo tentaria abrir aquilo com read_page.
+    return results.filter((result) => isBrowsable(result.url)).slice(0, limit);
   }
 
   /**
@@ -121,17 +133,31 @@ export class ResearchClient {
    * @returns {Promise<Array<{ title: string, url: string, snippet: string }>>}
    */
   async #searchSearxng(query) {
-    const params = new URLSearchParams({ q: query, format: 'json', language: 'pt-BR' });
+    // language=all e não 'pt-BR': a fonte primária de hardware é em inglês, e
+    // restringir o idioma cortava a documentação oficial do resultado. Medido
+    // na mesma query, 'pt-BR' devolvia 10 resultados de um motor só; 'all'
+    // devolve 28, de vários motores, com o docs.espressif.com entre eles.
+    const params = new URLSearchParams({ q: query, format: 'json', language: 'all' });
     const response = await this.#request(`${this.#searxngBaseUrl}/search?${params}`, {
       Accept: 'application/json',
+      // O middleware de botdetection do SearXNG loga
+      // "X-Forwarded-For nor X-Real-IP header is set!" a cada busca, mesmo com o
+      // limiter desligado. A instância é interna à rede do compose e não tem
+      // proxy na frente pra preencher o cabeçalho, então preenchemos aqui: o
+      // erro some do log e nada mais muda.
+      'X-Forwarded-For': '127.0.0.1',
     });
     const data = await response.json();
 
-    return (data.results ?? []).map((item) => ({
-      title: String(item.title ?? '').trim(),
-      url: String(item.url ?? '').trim(),
-      snippet: normalizeWhitespace(item.content ?? ''),
-    }));
+    // Vários motores devolvem a mesma página, e resultado repetido ocupa a vaga
+    // de uma fonte nova — além de fazer o modelo "ler" duas vezes o mesmo texto.
+    return dedupeByUrl(
+      (data.results ?? []).map((item) => ({
+        title: String(item.title ?? '').trim(),
+        url: String(item.url ?? '').trim(),
+        snippet: normalizeWhitespace(item.content ?? ''),
+      }))
+    );
   }
 
   /**
@@ -226,27 +252,39 @@ export class ResearchClient {
   }
 
   /**
-   * Requisição HTTP com timeout e cabeçalhos de navegador.
+   * Requisição HTTP com timeout, cabeçalhos de navegador e retry automático.
    * @param {string} url
    * @param {Record<string, string>} [headers]
    * @returns {Promise<Response>}
    */
   async #request(url, headers = {}) {
-    const response = await fetch(url, {
-      redirect: 'follow',
-      signal: AbortSignal.timeout(this.#timeoutMs),
-      headers: {
-        'User-Agent': USER_AGENT,
-        'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
-        ...headers,
-      },
-    });
+    const requestHeaders = { ...DEFAULT_HEADERS, ...headers };
+    let lastError;
 
-    if (!response.ok) {
-      throw new Error(`Requisição para ${url} falhou com status ${response.status}.`);
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const response = await fetch(url, {
+          redirect: 'follow',
+          signal: AbortSignal.timeout(this.#timeoutMs),
+          headers: requestHeaders,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Requisição para ${url} falhou com status ${response.status}.`);
+        }
+
+        return response;
+      } catch (err) {
+        lastError = err;
+        if (attempt === 1 && (err.name === 'TypeError' || err.name === 'TimeoutError' || err.name === 'AbortError')) {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          continue;
+        }
+        break;
+      }
     }
 
-    return response;
+    throw lastError;
   }
 
   /**
@@ -260,14 +298,57 @@ export class ResearchClient {
     let read = 0;
     let text = '';
 
-    for await (const chunk of response.body) {
-      read += chunk.length;
-      text += decoder.decode(chunk, { stream: true });
-      if (read >= this.#maxPageBytes) break;
+    try {
+      for await (const chunk of response.body) {
+        read += chunk.length;
+        text += decoder.decode(chunk, { stream: true });
+
+        if (read >= this.#maxPageBytes) {
+          // Abandonar o corpo no meio sem cancelar deixa a conexão presa no
+          // pool do undici. Depois de algumas páginas grandes, as requisições
+          // seguintes morrem com um "fetch failed" sem explicação — que foi
+          // exatamente o sintoma visto no log de produção.
+          await response.body.cancel().catch(() => undefined);
+          break;
+        }
+      }
+    } catch (err) {
+      // Corpo truncado ainda é útil: o texto lido até aqui costuma bastar.
+      logger.warn('RESEARCH', 'Leitura do corpo interrompida, usando o que foi lido', err);
     }
 
     return text + decoder.decode();
   }
+}
+
+/**
+ * @param {string} url
+ * @returns {boolean}
+ */
+export function isBrowsable(url) {
+  try {
+    return /^https?:$/.test(new URL(String(url ?? '')).protocol);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Remove resultados repetidos, comparando host + caminho — a mesma página
+ * aparece com "www.", barra final e query de rastreio conforme o motor.
+ * @param {Array<{ url: string }>} results
+ * @returns {Array<{ url: string }>}
+ */
+export function dedupeByUrl(results) {
+  const seen = new Set();
+
+  return results.filter(({ url }) => {
+    const key = sourceKey(url) || url;
+    if (!key || seen.has(key)) return false;
+
+    seen.add(key);
+    return true;
+  });
 }
 
 /**

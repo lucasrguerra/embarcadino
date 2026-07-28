@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   auditDraft,
   buildSeoRevisionRequest,
+  nextRevisionBatch,
   fleschReadingEase,
   findConsecutiveSameStart,
   hasTransitionWord,
@@ -11,6 +12,7 @@ import {
   stripBlocks,
 } from '../../src/modules/writer/writer.seo.js';
 import { cleanDraft, cleanContent } from './draft.fixture.js';
+import { SourceRegistry } from '../../src/modules/research/source.registry.js';
 
 /** Rascunho que passa em todos os critérios; cada teste estraga um de cada vez. */
 const CLEAN = cleanDraft();
@@ -136,7 +138,40 @@ test('buildSeoRevisionRequest lista os problemas e proíbe encurtar o texto', ()
 
   assert.ok(request.includes('O título tem 72 caracteres.'));
   assert.ok(request.includes('Reescreva com até 60.'));
-  assert.match(request, /não reduza o número de palavras/i);
+  assert.match(request, /o mesmo número de palavras ou mais/i);
+});
+
+test('a rodada de substância proíbe mexer na forma', () => {
+  const request = buildSeoRevisionRequest(
+    [{ message: 'O texto tem 600 palavras.', fix: 'Amplie.' }],
+    CLEAN,
+    'substance'
+  );
+
+  assert.match(request, /não mexa em legibilidade/i);
+  assert.match(request, /acrescente por cima/i);
+});
+
+test('nextRevisionBatch trata substância antes de forma', () => {
+  const short = { code: 'content-short', blocking: true };
+  const flesch = { code: 'flesch', blocking: true };
+  const internal = { code: 'internal-links', blocking: false };
+
+  const first = nextRevisionBatch([short, flesch, internal]);
+  assert.equal(first.stage, 'substance');
+  // Forma fica de fora, e o aviso de link interno pega carona.
+  assert.deepEqual(first.issues.map((i) => i.code), ['content-short', 'internal-links']);
+
+  const second = nextRevisionBatch([flesch, internal]);
+  assert.equal(second.stage, 'form');
+  assert.deepEqual(second.issues.map((i) => i.code), ['flesch']);
+});
+
+test('nextRevisionBatch não abre rodada de substância só por um aviso', () => {
+  // internal-links não é bloqueante: sozinho, não segura o ciclo na substância.
+  const batch = nextRevisionBatch([{ code: 'internal-links', blocking: false }, { code: 'flesch', blocking: true }]);
+
+  assert.equal(batch.stage, 'form');
 });
 
 test('auditDraft reprova texto abaixo do piso de 800 palavras', () => {
@@ -170,4 +205,41 @@ test('auditDraft conta fontes por domínio, não por link', () => {
   const issue = auditDraft({ ...CLEAN, content }).find((i) => i.code === 'external-links');
 
   assert.match(issue.message, /1 fonte/);
+});
+
+test('auditDraft reprova link para página que não foi lida', () => {
+  const sources = new SourceRegistry();
+  sources.addRead('https://docs.espressif.com/ds');
+
+  const issue = auditDraft(CLEAN, { sources }).find((i) => i.code === 'unverified-links');
+
+  assert.ok(issue);
+  assert.equal(issue.blocking, true);
+  // O rfc-editor e o csa-iot da fixture não foram lidos.
+  assert.match(issue.message, /rfc-editor/);
+  // E a correção mostra ao modelo o que ele de fato leu.
+  assert.match(issue.fix, /docs\.espressif\.com\/ds/);
+});
+
+test('auditDraft aceita link cujo endereço difere só em www e barra final', () => {
+  const sources = new SourceRegistry();
+  for (const url of ['https://www.docs.espressif.com/ds/', 'https://www.rfc-editor.org/rfc/rfc7252', 'https://csa-iot.org/matter']) {
+    sources.addRead(url);
+  }
+
+  assert.ok(!auditDraft(CLEAN, { sources }).some((i) => i.code === 'unverified-links'));
+});
+
+test('auditDraft não conta como fonte a página que não foi lida', () => {
+  const sources = new SourceRegistry();
+  sources.addRead('https://docs.espressif.com/ds');
+
+  const issue = auditDraft(CLEAN, { sources }).find((i) => i.code === 'external-links');
+
+  assert.ok(issue, 'as três fontes da fixture deveriam cair para uma verificada');
+  assert.match(issue.message, /1 fonte/);
+});
+
+test('sem registro de fontes a auditoria não cobra verificação', () => {
+  assert.ok(!auditDraft(CLEAN).some((i) => i.code === 'unverified-links'));
 });

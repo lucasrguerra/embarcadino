@@ -16,9 +16,8 @@ export class WriterHandlers {
    * @param {import('../writer.service.js').WriterService} service
    * @param {import('../writer.formatter.js').WriterFormatter} formatter
    * @param {import('../../blog/blog.service.js').BlogService} blogService
-   * @param {import('../../imagery/imagery.service.js').ImageryService} imageryService
    */
-  constructor(service, formatter, blogService, imageryService) {
+  constructor(service, formatter, blogService) {
     /**
      * /post <tema> [| referência] [| observações] — Pesquisa, redige e salva o
      * rascunho direto no WordPress. Restrito aos chats administradores.
@@ -49,35 +48,20 @@ export class WriterHandlers {
         clearInterval(typing);
       }
 
-      // As ilustrações entram depois do texto pronto: o `alt` que o redator
-      // escreveu é o briefing da arte. Falha aqui não cancela nada — o bloco
-      // fica sem imagem e o rascunho segue.
-      let illustration = { images: [], failed: 0 };
-      try {
-        const result = await imageryService.illustrate(draft);
-        illustration = result;
-        draft = { ...draft, content: result.content, images: result.images };
-      } catch (err) {
-        logger.error('WRITER', 'Falha ao ilustrar o rascunho', err);
-      }
-
       // O rascunho vai pro WordPress, mas o texto nunca depende disso: se o
       // blog estiver fora do ar ou a credencial vencida, o arquivo salva o
       // trabalho de vários minutos de redação.
       let published = null;
       if (blogService.canWrite) {
         try {
-          published = await blogService.createDraft({
-            ...draft,
-            featuredMediaId: illustration.images[0]?.id,
-          });
+          published = await blogService.createDraft(draft);
           logger.info('WRITER', `Rascunho ${published.id} criado no WordPress.`);
         } catch (err) {
           logger.error('WRITER', 'Falha ao criar o rascunho no WordPress', err);
         }
       }
 
-      await ctx.reply(formatter.formatSummary(draft, published, illustration), HTML);
+      await ctx.reply(formatter.formatSummary(draft, published), HTML);
 
       if (published) return undefined;
 

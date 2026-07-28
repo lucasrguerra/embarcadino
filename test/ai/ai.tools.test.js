@@ -42,7 +42,7 @@ test('web_search normaliza limite inválido para o padrão', async () => {
   const dispatcher = createDispatcher();
 
   const semLimite = await dispatcher.web_search({ query: 'esp32' });
-  assert.equal(semLimite.results[0].limit, 6);
+  assert.equal(semLimite.results[0].limit, 8);
 
   const limiteAbsurdo = await dispatcher.web_search({ query: 'esp32', limit: 500 });
   assert.equal(limiteAbsurdo.results[0].limit, 10);

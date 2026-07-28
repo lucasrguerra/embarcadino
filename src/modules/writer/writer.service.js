@@ -14,7 +14,7 @@
 
 import { logger } from '../../shared/logger.js';
 import { WRITER_SYSTEM_PROMPT, SECTION_MARKERS, BLOG_CATEGORIES, buildWriterRequest } from './writer.prompt.js';
-import { auditDraft, buildSeoRevisionRequest } from './writer.seo.js';
+import { auditDraft, buildSeoRevisionRequest, nextRevisionBatch } from './writer.seo.js';
 
 /** Redigir com pesquisa exige mais idas e vindas que responder uma pergunta. */
 const MAX_TOOL_ROUNDS = 25;
@@ -41,11 +41,14 @@ const WRITE_TIMEOUT_MS = 300_000;
 const MAX_TOOL_RESULT_CHARS = 20_000;
 
 /**
- * Quantas vezes o rascunho volta para o modelo por reprovar na auditoria de SEO.
- * Três passadas porque a auditoria agora cobra também tamanho e referências, e
- * ampliar o texto costuma custar uma rodada só para isso.
+ * Quantas vezes o rascunho volta para o modelo por reprovar na auditoria.
+ *
+ * Como a correção é escalonada (substância primeiro, forma depois), o ciclo
+ * gasta pelo menos uma rodada em cada etapa — e uma tentativa descartada por
+ * encolher o texto consome uma delas. Cinco dá folga para as duas etapas
+ * fecharem mesmo com um tropeço no meio.
  */
-const MAX_SEO_REVISIONS = 3;
+const MAX_SEO_REVISIONS = 5;
 
 /**
  * Piso de palavras aceito numa revisão, em relação ao rascunho anterior.
@@ -85,19 +88,22 @@ export class WriterService {
   #model;
   /** @type {string | undefined} */
   #blogBaseUrl;
+  /** @type {import('../research/source.registry.js').SourceRegistry | undefined} */
+  #sources;
 
   /**
    * @param {import('../ai/ai.client.js').AiClient} client
    * @param {Array<Object>} tools
    * @param {Record<string, (args: Object) => Promise<unknown>>} dispatcher
-   * @param {{ model?: string, blogBaseUrl?: string }} [options]
+   * @param {{ model?: string, blogBaseUrl?: string, sources?: import('../research/source.registry.js').SourceRegistry }} [options]
    */
-  constructor(client, tools, dispatcher, { model, blogBaseUrl } = {}) {
+  constructor(client, tools, dispatcher, { model, blogBaseUrl, sources } = {}) {
     this.#client = client;
     this.#tools = tools;
     this.#dispatcher = dispatcher;
     this.#model = model;
     this.#blogBaseUrl = blogBaseUrl;
+    this.#sources = sources;
   }
 
   /**
@@ -107,6 +113,10 @@ export class WriterService {
    * @returns {Promise<{ title: string, excerpt: string, categories: string[], content: string, words: number, seo: Array<Object> }>}
    */
   async write(briefing) {
+    // O registro é por redação: fonte lida no post anterior não autoriza
+    // referência no próximo.
+    this.#sources?.clear();
+
     const messages = [
       { role: 'system', content: WRITER_SYSTEM_PROMPT },
       { role: 'user', content: buildWriterRequest(briefing) },
@@ -130,7 +140,7 @@ export class WriterService {
    */
   async #reviseForSeo(messages, initial, theme) {
     let draft = initial;
-    const options = { blogBaseUrl: this.#blogBaseUrl };
+    const options = { blogBaseUrl: this.#blogBaseUrl, sources: this.#sources };
 
     for (let attempt = 1; attempt <= MAX_SEO_REVISIONS; attempt++) {
       const issues = auditDraft(draft, options);
@@ -141,19 +151,23 @@ export class WriterService {
         return { ...draft, seo: issues };
       }
 
+      // Uma rodada trata de substância OU de forma, nunca das duas: pedir
+      // "amplie" e "encurte as frases" juntos trava o ciclo.
+      const { stage, issues: batch } = nextRevisionBatch(issues);
+
       logger.info(
         'WRITER',
-        `Auditoria de SEO reprovou (tentativa ${attempt}/${MAX_SEO_REVISIONS}): ${blocking
+        `Auditoria de SEO reprovou (tentativa ${attempt}/${MAX_SEO_REVISIONS}, corrigindo ${stage}): ${blocking
           .map((issue) => issue.code)
           .join(', ')}`
       );
 
-      messages.push({ role: 'user', content: buildSeoRevisionRequest(blocking, draft) });
+      messages.push({ role: 'user', content: buildSeoRevisionRequest(batch, draft, stage) });
 
-      // Faltar referência é o único problema que não se resolve reescrevendo:
-      // o modelo precisa abrir fonte nova. Nesse caso as ferramentas ficam
-      // liberadas; nos demais, bloqueadas, para ele não recomeçar a pesquisa.
-      const needsResearch = blocking.some((issue) => issue.code === 'external-links');
+      // Na rodada de substância as ferramentas ficam liberadas: ampliar o texto
+      // e trocar referência exigem abrir fonte nova. Na de forma, bloqueadas,
+      // para ele não recomeçar a pesquisa em vez de reescrever.
+      const needsResearch = stage === 'substance';
 
       let content;
       try {
@@ -170,11 +184,24 @@ export class WriterService {
 
       const revised = parseDraft(content, theme);
       if (revised.words < draft.words * MIN_REVISION_WORD_RATIO) {
+        // Descartar e desistir era o comportamento anterior, e ele entregava o
+        // rascunho com TODAS as pendências de pé por causa de uma tentativa
+        // ruim. Agora a tentativa é descartada e o modelo é avisado do que fez
+        // de errado — ele ainda tem as rodadas restantes para acertar.
         logger.warn(
           'WRITER',
-          `Revisão de SEO cortou o texto (${draft.words} → ${revised.words} palavras), descartando.`
+          `Revisão de SEO cortou o texto (${draft.words} → ${revised.words} palavras), descartando a tentativa.`
         );
-        break;
+        messages.push({
+          role: 'user',
+          content:
+            `Essa revisão cortou o texto de ${draft.words} para ${revised.words} palavras, e conteúdo não pode ` +
+            'ser removido. Refaça a partir da versão anterior, mantendo todas as seções, todos os dados e todas ' +
+            'as referências. Se precisar encurtar frases, divida uma frase em duas — isso não reduz o número de ' +
+            'palavras. Apagar parágrafo, item de lista ou referência para "melhorar a métrica" é o oposto do que ' +
+            'estou pedindo.',
+        });
+        continue;
       }
 
       // As categorias não são reavaliadas pela auditoria; se a revisão vier sem
@@ -270,13 +297,14 @@ Não adicione comentários, introduções ou explicações fora do envelope. Com
         // com os snippets da busca. Mandamos de volta uma vez, com as tools
         // ainda disponíveis — é a diferença entre um post com especificação e
         // um post genérico.
-        if (pageReads < MIN_PAGE_READS && researchPushbacks < MAX_RESEARCH_PUSHBACKS && !forceText) {
+        const reads = this.#sources?.readCount ?? pageReads;
+        if (reads < MIN_PAGE_READS && researchPushbacks < MAX_RESEARCH_PUSHBACKS && !forceText) {
           researchPushbacks++;
-          logger.info('WRITER', `Rascunho antes da pesquisa (${pageReads} leitura(s)), exigindo read_page.`);
+          logger.info('WRITER', `Rascunho antes da pesquisa (${reads} leitura(s)), exigindo read_page.`);
           messages.push({
             role: 'user',
             content:
-              `Antes de fechar o rascunho: você abriu ${pageReads} página(s) com read_page. ` +
+              `Antes de fechar o rascunho: você abriu ${reads} página(s) com read_page. ` +
               `Leia ao menos ${MIN_PAGE_READS} fontes primárias agora (documentação oficial, datasheet, ` +
               'aviso do fabricante, relatório técnico) sobre os pontos centrais do tema. ' +
               'Depois reescreva o rascunho completo usando os dados concretos que encontrar — número, ' +
@@ -289,12 +317,18 @@ Não adicione comentários, introduções ou explicações fora do envelope. Com
       }
 
       for (const toolCall of message.tool_calls) {
-        if (toolCall.function?.name === 'read_page') pageReads++;
+        const result = await this.#runTool(toolCall);
+
+        // Só leitura bem-sucedida conta. A tool devolve `{ error }` em vez de
+        // estourar quando a URL não existe, e sem esse filtro dois palpites
+        // errados satisfariam a exigência de pesquisa. Páginas repetidas também
+        // não contam duas vezes — daí preferir o registro, que deduplica.
+        if (toolCall.function?.name === 'read_page' && !result?.error) pageReads++;
 
         messages.push({
           role: 'tool',
           tool_call_id: toolCall.id,
-          content: truncateJson(await this.#runTool(toolCall)),
+          content: truncateJson(result),
         });
       }
     }

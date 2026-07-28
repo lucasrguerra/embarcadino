@@ -10,6 +10,8 @@
  * regra: o modelo consulta, quem age é o usuário através dos comandos do bot.
  */
 
+import { logger } from '../../shared/logger.js';
+
 /** @type {Array<Object>} Schemas no formato OpenAI function calling. */
 export const AI_TOOLS = [
   {
@@ -29,7 +31,7 @@ export const AI_TOOLS = [
           },
           limit: {
             type: 'integer',
-            description: 'Quantos resultados trazer (1 a 10). Padrão: 6.',
+            description: 'Quantos resultados trazer (1 a 10). Padrão: 8.',
           },
         },
         required: ['query'],
@@ -43,7 +45,9 @@ export const AI_TOOLS = [
       name: 'read_page',
       description:
         'Abre uma URL e devolve o texto legível da página (título, descrição e conteúdo). ' +
-        'Use para ler a fonte antes de afirmar algo, ou quando o usuário mandar um link.',
+        'Use para ler a fonte antes de afirmar algo, ou quando o usuário mandar um link. ' +
+        'A URL precisa ser copiada de um resultado de web_search — endereço montado de cabeça dá 404. ' +
+        'Quando a leitura falha, a resposta traz `error`, `hint` e páginas reais em `suggestions`.',
       parameters: {
         type: 'object',
         properties: {
@@ -130,32 +134,53 @@ export const AI_TOOLS = [
 /**
  * Constrói o dispatcher de tools — mapeia nome de função para execução real,
  * usando apenas métodos de consulta dos services já existentes.
- * @param {{ researchService: import('../research/research.service.js').ResearchService, blogService: import('../blog/blog.service.js').BlogService, knowledgeService: import('../knowledge/knowledge.service.js').KnowledgeService }} deps
+ * O `sources` é opcional e serve à redação de posts: ele guarda o que a busca
+ * devolveu e o que foi realmente lido, para a auditoria poder recusar
+ * referência que o modelo não abriu. O assistente do chat não precisa dele.
+ * @param {{ researchService: import('../research/research.service.js').ResearchService, blogService: import('../blog/blog.service.js').BlogService, knowledgeService: import('../knowledge/knowledge.service.js').KnowledgeService, sources?: import('../research/source.registry.js').SourceRegistry }} deps
  * @returns {Record<string, (args: Object) => Promise<unknown>>}
  */
-export function createToolDispatcher({ researchService, blogService, knowledgeService }) {
+export function createToolDispatcher({ researchService, blogService, knowledgeService, sources }) {
   return {
-    web_search: async ({ query, limit }) => ({
-      query,
-      results: await researchService.search(query, clampLimit(limit, 6)),
-    }),
+    web_search: async ({ query, limit }) => {
+      const results = await researchService.search(query, clampLimit(limit, 8));
+      sources?.addSearchResults(results);
 
-    read_page: async ({ url }) => {
-      const page = await researchService.readPage(url);
-      return {
-        url: page.url,
-        title: page.title,
-        description: page.description,
-        content: page.text,
-        truncated: page.truncated,
-        links: page.links.slice(0, 10),
-      };
+      return { query, results };
     },
 
-    blog_search: async ({ query, limit }) => ({
-      query,
-      posts: await blogService.search(query, clampLimit(limit, 5)),
-    }),
+    read_page: async ({ url }) => {
+      try {
+        const page = await researchService.readPage(url);
+        sources?.addRead(page.url);
+
+        return {
+          url: page.url,
+          title: page.title,
+          description: page.description,
+          content: page.text,
+          truncated: page.truncated,
+          links: page.links.slice(0, 10),
+        };
+      } catch (err) {
+        // O modelo erra a URL o tempo todo — ele monta um endereço plausível a
+        // partir do nome do site em vez de copiar o que a busca devolveu, e o
+        // resultado é 404. Um erro seco faz ele tentar outro palpite; devolver
+        // páginas reais sobre o mesmo assunto o traz de volta pra fonte certa.
+        // Sem este log a falha some: a tool devolve o erro como resultado, então
+        // o `catch` de quem chama nunca dispara e o problema fica invisível.
+        logger.warn('TOOLS', `read_page falhou em ${url}`, err);
+
+        return { ...describeReadFailure(url, err), suggestions: await suggestPages(researchService, url) };
+      }
+    },
+
+    blog_search: async ({ query, limit }) => {
+      const posts = await blogService.search(query, clampLimit(limit, 5));
+      sources?.addSearchResults(posts);
+
+      return { query, posts };
+    },
 
     blog_latest: async ({ limit }) => ({ posts: await blogService.latest(clampLimit(limit, 5)) }),
 
@@ -168,6 +193,71 @@ export function createToolDispatcher({ researchService, blogService, knowledgeSe
       return entry ?? { error: `Projeto desconhecido: ${project}`, known: knowledgeService.ids() };
     },
   };
+}
+
+/**
+ * Traduz a falha de leitura em orientação acionável. Um 404 quase sempre é URL
+ * inventada; falha de rede é a página fora do ar, e insistir nela não resolve.
+ * @param {string} url
+ * @param {Error} err
+ * @returns {{ error: string, hint: string }}
+ */
+export function describeReadFailure(url, err) {
+  const message = String(err?.message ?? err);
+  const notFound = /status 4\d\d/.test(message);
+
+  return {
+    error: `Não consegui ler ${url}: ${message}`,
+    hint: notFound
+      ? 'Essa URL não existe. Não tente adivinhar outro endereço no mesmo site: use exatamente uma das URLs ' +
+        'devolvidas por web_search, copiada caractere por caractere, ou uma das sugestões abaixo.'
+      : 'A página não respondeu. Escolha outra fonte, entre as devolvidas por web_search ou entre as sugestões abaixo.',
+  };
+}
+
+/**
+ * Busca páginas reais sobre o mesmo assunto da URL que falhou, usando as
+ * palavras do próprio endereço como termo — é a informação que temos sobre o
+ * que o modelo queria ler.
+ * @param {import('../research/research.service.js').ResearchService} researchService
+ * @param {string} url
+ * @returns {Promise<Array<{ title: string, url: string }>>}
+ */
+export async function suggestPages(researchService, url) {
+  const query = queryFromUrl(url);
+  if (!query) return [];
+
+  try {
+    const results = await researchService.search(query, 4);
+    return results.map(({ title, url: found }) => ({ title, url: found }));
+  } catch {
+    // Sugestão é um extra; falhar aqui não pode transformar um erro de leitura
+    // em erro de tool.
+    return [];
+  }
+}
+
+/**
+ * Transforma "https://site.com/esp32-brownout-detector/" em
+ * "site esp32 brownout detector".
+ * @param {string} url
+ * @returns {string}
+ */
+export function queryFromUrl(url) {
+  const value = String(url ?? '').trim();
+
+  try {
+    const parsed = new URL(/^https?:\/\//i.test(value) ? value : `https://${value}`);
+    const host = parsed.hostname.replace(/^www\./, '').split('.')[0];
+    const path = decodeURIComponent(parsed.pathname)
+      .replace(/\.\w{2,5}$/, '')
+      .replace(/[^\p{L}\p{N}]+/gu, ' ')
+      .trim();
+
+    return [host, path].filter(Boolean).join(' ').slice(0, 120);
+  } catch {
+    return '';
+  }
 }
 
 /**

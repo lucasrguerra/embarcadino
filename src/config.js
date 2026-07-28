@@ -67,17 +67,6 @@ class Config {
         process.env.LLM_WRITER_MODEL || process.env.LLM_MODEL || 'google/gemini-2.0-flash-001',
         baseUrl
       ),
-      /**
-       * Modelo de geração de imagem das ilustrações do post. Responde no mesmo
-       * endpoint de chat, com a modalidade de imagem pedida na saída.
-       *
-       * O identificador muda conforme o provedor: o OpenRouter usa o prefixo do
-       * fabricante ("google/gemini-…"), a API do Google AI Studio não aceita
-       * esse prefixo e responde 404. Como o `baseUrl` diz qual dos dois está em
-       * uso, normalizamos aqui em vez de deixar o erro aparecer no fim de uma
-       * redação de vários minutos.
-       */
-      imageModel: modelFor(process.env.LLM_IMAGE_MODEL || 'gemini-3.1-flash-image', baseUrl),
       /** Enviados ao OpenRouter para atribuição do app no ranking deles. */
       appUrl: process.env.LLM_APP_URL || 'https://cienciaembarcada.com.br',
       appName: process.env.LLM_APP_NAME || 'Embarcadino',

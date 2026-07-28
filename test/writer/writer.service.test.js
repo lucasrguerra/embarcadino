@@ -127,7 +127,7 @@ function conversation(turns) {
   const client = {
     async chat(messages, options) {
       const turn = turns[Math.min(calls.length, turns.length - 1)];
-      calls.push({ last: messages[messages.length - 1], options });
+      calls.push({ last: messages[messages.length - 1], sent: [...messages], options });
       return { message: typeof turn === 'string' ? { role: 'assistant', content: turn } : turn };
     },
   };
@@ -264,4 +264,68 @@ test('WriterService bloqueia as ferramentas na revisão puramente de forma', asy
   await new WriterService(client, [{ type: 'function' }], dispatcher()).write({ theme: 'ESP32-C6' });
 
   assert.equal(calls[2].options.toolChoice, 'none');
+});
+
+test('WriterService não conta read_page que falhou como pesquisa feita', async () => {
+  const { client, calls } = conversation([
+    // Duas "leituras" que devolvem erro: não deveriam satisfazer a exigência.
+    {
+      role: 'assistant',
+      tool_calls: [
+        { id: '1', function: { name: 'read_page', arguments: '{}' } },
+        { id: '2', function: { name: 'read_page', arguments: '{}' } },
+      ],
+    },
+    seoReadyEnvelope(),
+    READS_SOURCES,
+    seoReadyEnvelope(),
+  ]);
+
+  const { WriterService } = await import('../../src/modules/writer/writer.service.js');
+  await new WriterService(client, [{ type: 'function' }], {
+    read_page: async () => ({ error: 'Não consegui ler: status 404.' }),
+  }).write({ theme: 'ESP32-C6' });
+
+  assert.match(calls[2].last.content, /fontes primárias/);
+});
+
+test('WriterService insiste depois de uma revisão que encolheu o texto', async () => {
+  const longTitle = 'ESP32-C6 e o protocolo Matter: tudo o que muda no projeto de nós de rede';
+  const { client, calls } = conversation([
+    READS_SOURCES,
+    seoReadyEnvelope(longTitle, { sentences: 200 }),
+    seoReadyEnvelope(undefined, { sentences: 100 }), // encolheu: descartada
+    seoReadyEnvelope(undefined, { sentences: 200 }), // segunda tentativa, íntegra
+  ]);
+
+  const { WriterService } = await import('../../src/modules/writer/writer.service.js');
+  const draft = await new WriterService(client, [], dispatcher()).write({ theme: 'ESP32-C6' });
+
+  // A quarta chamada existe porque o ciclo não desistiu na revisão ruim.
+  assert.equal(calls.length, 4);
+  // O aviso do encolhimento ficou no histórico, antes do novo pedido de revisão.
+  assert.ok(calls[3].sent.some((m) => /cortou o texto/.test(m.content ?? '')));
+  assert.equal(draft.title, 'ESP32-C6: o chip do Matter');
+  assert.deepEqual(draft.seo, []);
+});
+
+test('WriterService corrige substância antes de forma, com as tools liberadas', async () => {
+  // Rascunho curto: reprova em content-short (substância) e em flesch (forma).
+  const short = seoReadyEnvelope(undefined, { sentences: 40 });
+  const { client, calls } = conversation([
+    READS_SOURCES,
+    short,
+    seoReadyEnvelope(undefined, { sentences: 200 }),
+  ]);
+
+  const { WriterService } = await import('../../src/modules/writer/writer.service.js');
+  await new WriterService(client, [{ type: 'function' }], dispatcher()).write({ theme: 'ESP32-C6' });
+
+  const request = calls[2].last.content;
+  assert.match(request, /O texto tem \d+ palavras/);
+  // A rodada de substância não pode pedir ajuste de forma junto.
+  assert.doesNotMatch(request, /legibilidade Flesch está em/);
+  assert.match(request, /não mexa em legibilidade/i);
+  // E vai com as ferramentas liberadas, porque ampliar exige fonte nova.
+  assert.notEqual(calls[2].options.toolChoice, 'none');
 });
