@@ -129,6 +129,43 @@ export class ResearchClient {
   }
 
   /**
+   * Consulta os temas em alta no Google Trends via RSS.
+   * @param {string} [geo] - Código de país ("BR", "US", etc.)
+   * @returns {Promise<{ geo: string, trends: Array<{ title: string, traffic: string, news: Array<{ title: string }> }> }>}
+   */
+  async fetchGoogleTrends(geo = 'BR') {
+    const code = String(geo || 'BR').toUpperCase();
+    const url = `https://trends.google.com/trending/rss?geo=${code}`;
+
+    try {
+      const response = await this.#request(url, { Accept: 'application/rss+xml, application/xml, text/xml' });
+      const xml = await this.#readLimited(response);
+      const $ = cheerio.load(xml, { xmlMode: true });
+
+      const trends = [];
+      $('item').each((_, el) => {
+        if (trends.length >= 15) return;
+        const title = normalizeWhitespace($(el).find('title').text());
+        const traffic = normalizeWhitespace($(el).find('ht\\:approx_traffic, approx_traffic').text());
+        const news = [];
+        $(el).find('ht\\:news_item, news_item').each((_, n) => {
+          const headline = normalizeWhitespace($(n).find('ht\\:news_item_title, news_item_title').text());
+          if (headline) news.push({ title: headline });
+        });
+
+        if (title) {
+          trends.push({ title, traffic, news: news.slice(0, 3) });
+        }
+      });
+
+      return { geo: code, trends };
+    } catch (err) {
+      logger.warn('RESEARCH', `Falha ao buscar Google Trends para geo=${code}`, err);
+      return { geo: code, trends: [], error: err.message };
+    }
+  }
+
+  /**
    * @param {string} query
    * @returns {Promise<Array<{ title: string, url: string, snippet: string }>>}
    */

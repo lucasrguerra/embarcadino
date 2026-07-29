@@ -39,7 +39,8 @@ const HELP_MESSAGE =
   '/pesquisar &lt;termo&gt; — busca na internet\n' +
   '/pagina &lt;url&gt; — leio uma página e te devolvo o conteúdo em texto\n\n' +
   '✍️ <b>Redação</b> <i>(restrito ao Lucas)</i>\n' +
-  '/post &lt;tema&gt; — pesquiso e escrevo um rascunho de publicação';
+  '/post &lt;tema&gt; — pesquiso e escrevo um rascunho de publicação\n' +
+  '/temas [foco] — sugiro temas em alta para as próximas publicações (ou /ideias)';
 
 /**
  * Envolve um handler assíncrono com tratamento de erro padronizado.
@@ -107,6 +108,8 @@ export function registerRoutes(bot, { ai, blog, knowledge, research, writer }) {
   // ── Módulo Writer (restrito) ───────────────────────────────────────────────
 
   bot.command('post', adminOnly(wrap(writer.post)));
+  bot.command('temas', adminOnly(wrap(writer.topics)));
+  bot.command('ideias', adminOnly(wrap(writer.topics)));
 
   // ── Módulo AI ──────────────────────────────────────────────────────────────
 

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseDraft, parseCategories, countWords } from '../../src/modules/writer/writer.service.js';
+import { parseDraft, parseCategories, countWords, parseTopics } from '../../src/modules/writer/writer.service.js';
 import { parseBriefing } from '../../src/modules/writer/handlers/index.js';
 import { seoReadyEnvelope } from './draft.fixture.js';
 
@@ -328,4 +328,73 @@ test('WriterService corrige substância antes de forma, com as tools liberadas',
   assert.match(request, /não mexa em legibilidade/i);
   // E vai com as ferramentas liberadas, porque ampliar exige fonte nova.
   assert.notEqual(calls[2].options.toolChoice, 'none');
+});
+
+test('parseTopics extrai os blocos de temas corretamente', () => {
+  const topicsRaw = `===TEMA===
+===TITULO===
+ESP32-P4 e RISC-V industrial
+===CATEGORIAS===
+iot, sistemas-embarcados, invalid_category
+===TENDENCIA===
+Crescimento da arquitetura RISC-V na indústria.
+===ENFOQUE===
+Análise prática do processador duplo núcleo.
+
+===TEMA===
+===TITULO===
+Matter 1.3: novidades para energia
+===CATEGORIAS===
+comunicacao, automacao
+===TENDENCIA===
+Lançamento da especificação com suporte a gestão de energia.
+===ENFOQUE===
+Como implementar relatórios de consumo.`;
+
+  const topics = parseTopics(topicsRaw);
+
+  assert.equal(topics.length, 2);
+  assert.equal(topics[0].title, 'ESP32-P4 e RISC-V industrial');
+  assert.deepEqual(topics[0].categories, ['iot', 'sistemas-embarcados']);
+  assert.equal(topics[0].trend, 'Crescimento da arquitetura RISC-V na indústria.');
+  assert.equal(topics[0].angle, 'Análise prática do processador duplo núcleo.');
+
+  assert.equal(topics[1].title, 'Matter 1.3: novidades para energia');
+  assert.deepEqual(topics[1].categories, ['comunicacao', 'automacao']);
+});
+
+test('parseTopics trata fallback para texto sem marcadores', () => {
+  const raw = 'Sugestões livres de temas sobre segurança em IoT.';
+  const topics = parseTopics(raw);
+
+  assert.equal(topics.length, 1);
+  assert.equal(topics[0].title, 'Sugestões de temas');
+  assert.equal(topics[0].angle, raw);
+});
+
+test('WriterService.suggestTopics executa pesquisa e devolve os temas', async () => {
+  const topicsResponse = `===TEMA===
+===TITULO===
+Cibersegurança em firmware ESP32
+===CATEGORIAS===
+seguranca, iot
+===TENDENCIA===
+Aumento de ataques direcionados a dispositivos de borda.
+===ENFOQUE===
+Práticas de Secure Boot e Flash Encryption.`;
+
+  const { client, calls } = conversation([
+    { role: 'assistant', tool_calls: [{ id: '1', function: { name: 'web_search', arguments: '{"query":"iot trends"}' } }] },
+    topicsResponse,
+  ]);
+
+  const { WriterService } = await import('../../src/modules/writer/writer.service.js');
+  const service = new WriterService(client, [{ type: 'function' }], dispatcher());
+
+  const topics = await service.suggestTopics('seguranca');
+
+  assert.equal(calls.length, 2);
+  assert.equal(topics.length, 1);
+  assert.equal(topics[0].title, 'Cibersegurança em firmware ESP32');
+  assert.deepEqual(topics[0].categories, ['seguranca', 'iot']);
 });

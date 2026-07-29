@@ -41,6 +41,15 @@ export class ResearchService {
   }
 
   /**
+   * Consulta o Google Trends por país.
+   * @param {string} [geo]
+   * @returns {Promise<{ geo: string, trends: Array<{ title: string, traffic: string, news: Array<{ title: string }> }> }>}
+   */
+  async getGoogleTrends(geo = 'BR') {
+    return this.#client.fetchGoogleTrends(geo);
+  }
+
+  /**
    * Lê uma página e devolve o conteúdo já truncado.
    * @param {string} url
    * @returns {Promise<{ url: string, title: string, description: string, text: string, truncated: boolean, links: Array<{ text: string, url: string }> }>}

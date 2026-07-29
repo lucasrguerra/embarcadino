@@ -41,7 +41,7 @@ function noopHandlers() {
       entryCallback: handler(),
     },
     research: { search: handler(), page: handler() },
-    writer: { post: handler() },
+    writer: { post: handler(), topics: handler() },
   };
 }
 
@@ -72,6 +72,8 @@ test('registra todos os comandos públicos e o restrito', () => {
     'pesquisar',
     'pagina',
     'post',
+    'temas',
+    'ideias',
     'ask',
     'reset',
   ];

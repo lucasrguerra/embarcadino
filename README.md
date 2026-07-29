@@ -46,6 +46,8 @@ A IA roda via **OpenRouter** (API compatível com o formato da OpenAI), com **to
 | Comando | O que faz |
 |---------|-----------|
 | `/post <tema>` | Pesquisa o tema e escreve um rascunho de publicação |
+| `/temas [foco]` | Sugere temas em alta para as próximas publicações do blog |
+| `/ideias [foco]` | Atalho equivalente ao `/temas` |
 
 O `/post` aceita um briefing com até três partes separadas por `|`:
 
@@ -58,6 +60,30 @@ A parte que for URL vira a referência obrigatória (o bot lê a página antes d
 Com as credenciais do WordPress configuradas, o bot **cria o rascunho direto no blog** — com título, resumo e categorias preenchidos — e responde com o link do editor. Sem elas, ele entrega o mesmo conteúdo como arquivo `.html` para colar à mão.
 
 > O bot **nunca publica**. O status é fixo em `draft` no [blog.client.js](src/modules/blog/blog.client.js) e não há caminho no código que publique — revisar e publicar continua sendo decisão humana.
+
+---
+
+## Lista para o BotFather
+
+> Copie e cole o bloco abaixo diretamente no BotFather ao usar o comando `/setcommands`:
+
+```
+start - Mensagem de boas-vindas
+help - Exibe a lista de comandos disponíveis
+sobre - O que é o Ciência Embarcada
+servicos - Panorama dos projetos do Ciência Embarcada
+inbraille - Ficha do conversor InBraille
+espdocs - Ficha da documentação ESPDocs
+blog - Busca publicações do blog por termo
+ultimos - As publicações mais recentes do blog
+pesquisar - Busca na internet
+pagina - Lê uma página web e devolve o texto
+post - Pesquisa e redige um rascunho de publicação
+temas - Sugere temas em alta para as próximas publicações
+ideias - Sugere temas em alta com foco opcional
+ask - Pergunta livre pro assistente de IA
+reset - Esquece o histórico da conversa
+```
 
 ---
 

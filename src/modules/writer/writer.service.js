@@ -13,7 +13,15 @@
  */
 
 import { logger } from '../../shared/logger.js';
-import { WRITER_SYSTEM_PROMPT, SECTION_MARKERS, BLOG_CATEGORIES, buildWriterRequest } from './writer.prompt.js';
+import {
+  WRITER_SYSTEM_PROMPT,
+  SECTION_MARKERS,
+  TOPIC_MARKERS,
+  SUGGEST_TOPICS_SYSTEM_PROMPT,
+  BLOG_CATEGORIES,
+  buildWriterRequest,
+  buildTopicsRequest,
+} from './writer.prompt.js';
 import { auditDraft, buildSeoRevisionRequest, nextRevisionBatch } from './writer.seo.js';
 
 /** Redigir com pesquisa exige mais idas e vindas que responder uma pergunta. */
@@ -126,6 +134,21 @@ export class WriterService {
     const draft = parseDraft(raw, briefing.theme);
 
     return this.#reviseForSeo(messages, draft, briefing.theme);
+  }
+
+  /**
+   * Analisa tendências e o histórico do blog para sugerir temas de publicações.
+   * @param {string} [focus]
+   * @returns {Promise<Array<{ title: string, categories: string[], trend: string, angle: string }>>}
+   */
+  async suggestTopics(focus) {
+    const messages = [
+      { role: 'system', content: SUGGEST_TOPICS_SYSTEM_PROMPT },
+      { role: 'user', content: buildTopicsRequest(focus) },
+    ];
+
+    const raw = await this.#runToolLoopForTopics(messages);
+    return parseTopics(raw);
   }
 
   /**
@@ -374,6 +397,44 @@ Não adicione comentários, introduções ou explicações fora do envelope. Com
   }
 
   /**
+   * Executa o loop de ferramentas específico para pesquisa de temas.
+   * @param {Array<Object>} messages
+   * @returns {Promise<string>}
+   */
+  async #runToolLoopForTopics(messages) {
+    const MAX_TOPICS_TOOL_ROUNDS = 8;
+
+    for (let round = 0; round < MAX_TOPICS_TOOL_ROUNDS; round++) {
+      const remainingRounds = MAX_TOPICS_TOOL_ROUNDS - round;
+      const forceText = remainingRounds <= 1;
+
+      const { message } = await this.#client.chat(messages, {
+        tools: this.#tools,
+        model: this.#model,
+        ...(forceText ? { toolChoice: 'none' } : {}),
+      });
+      messages.push(message);
+
+      if (!message.tool_calls?.length) {
+        const content = message.content?.trim();
+        if (!content) throw new Error('O modelo devolveu uma resposta vazia ao sugerir temas.');
+        return content;
+      }
+
+      for (const toolCall of message.tool_calls) {
+        const result = await this.#runTool(toolCall);
+        messages.push({
+          role: 'tool',
+          tool_call_id: toolCall.id,
+          content: truncateJson(result),
+        });
+      }
+    }
+
+    throw new Error('O modelo não concluiu a pesquisa de temas a tempo.');
+  }
+
+  /**
    * @param {{ id: string, function: { name: string, arguments: string } }} toolCall
    * @returns {Promise<unknown>}
    */
@@ -477,3 +538,61 @@ function truncateJson(result) {
     ? json
     : `${json.slice(0, MAX_TOOL_RESULT_CHARS)}… [resultado truncado]`;
 }
+
+/**
+ * Extrai a lista de tópicos sugeridos pelo modelo a partir dos marcadores TOPIC_MARKERS.
+ * @param {string} raw
+ * @returns {Array<{ title: string, categories: string[], trend: string, angle: string }>}
+ */
+export function parseTopics(raw) {
+  const text = String(raw ?? '').replace(/\r/g, '');
+  const blocks = text.split(TOPIC_MARKERS.item).map((b) => b.trim()).filter(Boolean);
+
+  const topics = [];
+
+  for (const block of blocks) {
+    const title = extractTopicSection(block, TOPIC_MARKERS.title, TOPIC_MARKERS.categories).trim();
+    const categoriesRaw = extractTopicSection(block, TOPIC_MARKERS.categories, TOPIC_MARKERS.trend);
+    const trend = extractTopicSection(block, TOPIC_MARKERS.trend, TOPIC_MARKERS.angle).trim();
+    const angle = extractTopicSection(block, TOPIC_MARKERS.angle, null).trim();
+
+    if (title || trend || angle) {
+      topics.push({
+        title: title || 'Tema sem título',
+        categories: parseCategories(categoriesRaw),
+        trend: trend || '',
+        angle: angle || '',
+      });
+    }
+  }
+
+  if (topics.length === 0 && text.trim()) {
+    return [
+      {
+        title: 'Sugestões de temas',
+        categories: [],
+        trend: '',
+        angle: text.trim(),
+      },
+    ];
+  }
+
+  return topics;
+}
+
+/**
+ * @param {string} text
+ * @param {string} startMarker
+ * @param {string | null} endMarker
+ * @returns {string}
+ */
+function extractTopicSection(text, startMarker, endMarker) {
+  const from = text.indexOf(startMarker);
+  if (from === -1) return '';
+
+  const contentStart = from + startMarker.length;
+  const to = endMarker ? text.indexOf(endMarker, contentStart) : -1;
+
+  return text.slice(contentStart, to === -1 ? undefined : to);
+}
+

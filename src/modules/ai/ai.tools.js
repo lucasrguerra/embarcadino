@@ -42,6 +42,25 @@ export const AI_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'google_trends',
+      description:
+        'Consulta as pesquisas e assuntos em alta no Google Trends do dia (Brasil ou outro país). ' +
+        'Use para identificar termos populares e interesses recentes do público.',
+      parameters: {
+        type: 'object',
+        properties: {
+          geo: {
+            type: 'string',
+            description: 'Código do país (ex: "BR" para Brasil, "US" para EUA). Padrão: "BR".',
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'read_page',
       description:
         'Abre uma URL e devolve o texto legível da página (título, descrição e conteúdo). ' +
@@ -148,6 +167,8 @@ export function createToolDispatcher({ researchService, blogService, knowledgeSe
 
       return { query, results };
     },
+
+    google_trends: async ({ geo }) => researchService.getGoogleTrends(geo),
 
     read_page: async ({ url }) => {
       try {

@@ -98,3 +98,30 @@ test('respeita o limite de resultados pedido', async () => {
 
   assert.equal((await client.search('esp32', 3)).length, 3);
 });
+
+const TRENDS_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:ht="https://trends.google.com/trending/rss">
+  <channel>
+    <item>
+      <title>esp32 matter</title>
+      <ht:approx_traffic>10K+</ht:approx_traffic>
+      <ht:news_item>
+        <ht:news_item_title>Novo chip ESP32 com suporte a Matter 1.3</ht:news_item_title>
+      </ht:news_item>
+    </item>
+  </channel>
+</rss>`;
+
+test('fetchGoogleTrends busca e faz parse das pesquisas em alta via RSS', async () => {
+  const calls = mockFetch(() => ({ html: TRENDS_XML }));
+  const client = new ResearchClient({ maxPageBytes: 1e6, timeoutMs: 5000 });
+
+  const data = await client.fetchGoogleTrends('BR');
+
+  assert.match(calls[0], /trends\.google\.com\/trending\/rss\?geo=BR/);
+  assert.equal(data.geo, 'BR');
+  assert.equal(data.trends.length, 1);
+  assert.equal(data.trends[0].title, 'esp32 matter');
+  assert.equal(data.trends[0].traffic, '10K+');
+  assert.equal(data.trends[0].news[0].title, 'Novo chip ESP32 com suporte a Matter 1.3');
+});

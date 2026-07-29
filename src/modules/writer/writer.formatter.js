@@ -106,6 +106,78 @@ export class WriterFormatter {
   }
 
   /**
+   * Mensagem inicial ao pedir sugestões de temas.
+   * @param {string} [focus]
+   * @returns {string} HTML
+   */
+  formatTopicsStarted(focus) {
+    const detail = focus ? ` com foco em <b>${escapeHtml(focus)}</b>` : '';
+    return (
+      `💡 Analisando tendências e o histórico do blog${detail}...\n` +
+      '<i>└ Isso leva alguns segundos enquanto pesquiso o que está em alta</i>'
+    );
+  }
+
+  /**
+   * Formata a lista de temas sugeridos para o Telegram.
+   * @param {Array<{ title: string, categories: string[], trend: string, angle: string }>} topics
+   * @param {string} [focus]
+   * @returns {string} HTML
+   */
+  formatTopicsSummary(topics, focus) {
+    if (!topics || topics.length === 0) {
+      return (
+        '💡 <b>Não encontrei sugestões de temas no momento.</b>\n' +
+        '<i>└ Tenta refinar a pesquisa ou mudar o foco.</i>'
+      );
+    }
+
+    if (topics.length === 1 && !topics[0].trend && topics[0].title === 'Sugestões de temas') {
+      return `💡 <b>Ideias de publicações sugeridas:</b>\n\n${escapeHtml(topics[0].angle)}`;
+    }
+
+    const header = focus
+      ? `💡 <b>Sugestões de temas para o blog</b> (foco: <i>${escapeHtml(focus)}</i>)\n` +
+        '<i>└ Baseado em tendências atuais e no perfil do Ciência Embarcada:</i>'
+      : '💡 <b>Sugestões de temas para o blog</b>\n' +
+        '<i>└ Baseado em tendências atuais e no perfil do Ciência Embarcada:</i>';
+
+    const items = topics.map((item, index) => {
+      const lines = [`<b>${index + 1}. ${escapeHtml(item.title)}</b>`];
+
+      if (item.categories?.length > 0) {
+        lines.push(`<i>└ Categorias: <code>${escapeHtml(item.categories.join(' · '))}</code></i>`);
+      }
+
+      if (item.trend) {
+        lines.push(`<b>🔥 Tendência:</b> ${escapeHtml(item.trend)}`);
+      }
+
+      if (item.angle) {
+        lines.push(`<b>🎯 Enfoque:</b> ${escapeHtml(item.angle)}`);
+      }
+
+      lines.push(`<code>/post ${escapeHtml(item.title)}</code>`);
+
+      return lines.join('\n');
+    });
+
+    return [header, ...items].join('\n\n');
+  }
+
+  /**
+   * Mensagem de uso do /temas.
+   * @returns {string} HTML
+   */
+  formatTopicsUsage() {
+    return (
+      `💡 <b>Como pedir sugestões de temas:</b>\n` +
+      '<i>└ <code>/temas</code> — analisa tendências gerais em IoT, embarcados, redes e segurança</i>\n' +
+      '<i>└ <code>/temas esp32</code> — busca tendências com foco num assunto específico</i>'
+    );
+  }
+
+  /**
    * Nome do arquivo enviado, derivado do título.
    * @param {string} title
    * @returns {string}

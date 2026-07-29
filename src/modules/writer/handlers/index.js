@@ -75,6 +75,30 @@ export class WriterHandlers {
         { caption: formatter.formatFileCaption(), parse_mode: 'HTML' }
       );
     };
+
+    /**
+     * /temas [foco] (ou /ideias [foco]) — Pesquisa tendências e indica temas para posts.
+     * Restrito aos chats administradores.
+     * @param {import('telegraf').Context} ctx
+     */
+    this.topics = async function topics(ctx) {
+      const command = ctx.message?.text?.split(' ')[0]?.replace('/', '') || 'temas';
+      const focus = commandArgument(ctx, command);
+
+      await ctx.reply(formatter.formatTopicsStarted(focus), HTML);
+
+      const typing = setInterval(() => ctx.sendChatAction('typing').catch(() => {}), 5000);
+
+      try {
+        const topicList = await service.suggestTopics(focus);
+        await ctx.reply(formatter.formatTopicsSummary(topicList, focus), HTML);
+      } catch (err) {
+        logger.error('WRITER', 'Falha ao sugerir temas de publicações', err);
+        await ctx.reply(describeLlmFailure(err) ?? formatter.formatError(), HTML);
+      } finally {
+        clearInterval(typing);
+      }
+    };
   }
 }
 

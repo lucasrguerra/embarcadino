@@ -119,3 +119,31 @@ test('falha na redação não tenta salvar nada no blog', async () => {
   assert.equal(blogService.createDraft.mock.callCount(), 0);
   assert.match(ctx.reply.mock.calls.at(-1).arguments[0], /Não consegui fechar esse rascunho/);
 });
+
+test('topics handler chama suggestTopics e envia resumo para o chat', async () => {
+  const service = {
+    suggestTopics: mock.fn(async () => [
+      {
+        title: 'ESP32-P4 Industrial',
+        categories: ['iot'],
+        trend: 'Tendência RISC-V',
+        angle: 'Enfoque prático',
+      },
+    ]),
+  };
+  const handlers = new WriterHandlers(service, new WriterFormatter(), { canWrite: false });
+  const ctx = {
+    chat: { id: 1 },
+    message: { text: '/temas esp32' },
+    reply: mock.fn(async () => {}),
+    sendChatAction: mock.fn(async () => {}),
+  };
+
+  await handlers.topics(ctx);
+
+  assert.equal(service.suggestTopics.mock.callCount(), 1);
+  assert.equal(service.suggestTopics.mock.calls[0].arguments[0], 'esp32');
+  assert.match(ctx.reply.mock.calls.at(-1).arguments[0], /ESP32-P4 Industrial/);
+  assert.match(ctx.reply.mock.calls.at(-1).arguments[0], /\/post ESP32-P4 Industrial/);
+});
+
